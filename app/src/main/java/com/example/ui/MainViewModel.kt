@@ -728,8 +728,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
       val session = JavaDecompilerEngine.openDexSession(repo.cacheDir, dexFile, dexEntryName)
       activeDecompilerSession = session
       val classes = session.listClasses()
-      val firstClass = classes.firstOrNull { !it.fullName.startsWith("android.") && !it.fullName.startsWith("androidx.") }
-        ?: classes.firstOrNull()
 
       _uiState.update { state ->
         state.copy(
@@ -737,6 +735,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             targetFilePath = dexFile.absolutePath,
             activeDexEntry = dexEntryName,
             classes = classes,
+            currentPackagePath = "",
+            showClassBrowser = true,
+            searchQuery = "",
             isLoadingIndex = false,
             selectedClass = null,
             javaCode = "",
@@ -747,9 +748,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             redoStack = emptyList(),
           )
         )
-      }
-      if (firstClass != null) {
-        selectDexClass(firstClass)
       }
     }.onFailure { e ->
       _uiState.update { state ->
@@ -769,12 +767,71 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
+  fun openDexPackageFolder(packagePath: String) {
+    _uiState.update { state ->
+      state.copy(
+        dexEditor = state.dexEditor?.copy(
+          currentPackagePath = packagePath,
+          searchQuery = "",
+        )
+      )
+    }
+  }
+
+  fun navigateUpDexPackageFolder() {
+    _uiState.update { state ->
+      val ed = state.dexEditor ?: return@update state
+      if (ed.currentPackagePath.isEmpty()) return@update state
+      val parent = ed.currentPackagePath.substringBeforeLast('.', "")
+      state.copy(dexEditor = ed.copy(currentPackagePath = parent))
+    }
+  }
+
+  fun openClassBrowser() {
+    _uiState.update { state ->
+      val ed = state.dexEditor ?: return@update state
+      val pkg = ed.selectedClass?.packageName ?: ed.currentPackagePath
+      state.copy(
+        dexEditor = ed.copy(
+          showClassBrowser = true,
+          currentPackagePath = pkg,
+        )
+      )
+    }
+  }
+
+  fun returnToCodeEditorFromBrowser() {
+    _uiState.update { state ->
+      val ed = state.dexEditor ?: return@update state
+      if (ed.selectedClass == null) return@update state
+      state.copy(dexEditor = ed.copy(showClassBrowser = false))
+    }
+  }
+
+  fun discardEditsAndReturnToClassBrowser() {
+    _uiState.update { state ->
+      val ed = state.dexEditor ?: return@update state
+      state.copy(
+        dexEditor = ed.copy(
+          javaCode = ed.originalJavaCode,
+          isDirty = false,
+          undoStack = emptyList(),
+          redoStack = emptyList(),
+          showClassBrowser = true,
+        )
+      )
+    }
+  }
+
   fun selectDexClass(cls: DexClassInfo) {
     viewModelScope.launch(Dispatchers.IO) {
       _uiState.update { state ->
         state.copy(
           dexEditor = state.dexEditor?.copy(
             selectedClass = cls,
+            currentPackagePath = cls.packageName,
+            showClassBrowser = false,
+            decompilerMode = DecompilerMode.JAVA,
             isDecompiling = true,
             lastCompileResult = null,
           )
@@ -862,7 +919,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
-  fun compileEditedJavaToDex() {
+  fun compileEditedJavaToDex(returnToBrowserOnSuccess: Boolean = false) {
     val ed = _uiState.value.dexEditor ?: return
     val cls = ed.selectedClass ?: return
     viewModelScope.launch(Dispatchers.IO) {
@@ -899,6 +956,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 smaliCode = updatedSmali,
                 lastCompileResult = result,
                 hasUncommittedDexChanges = true,
+                patchedClassNames = state.dexEditor.patchedClassNames + cls.fullName,
+                showClassBrowser = if (returnToBrowserOnSuccess) true else state.dexEditor.showClassBrowser,
               )
             )
           }
@@ -1029,12 +1088,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
           refreshBothPanes()
           _uiState.update { state ->
+            val updatedPatched = if (ed.isDirty && ed.selectedClass != null) {
+              state.dexEditor?.patchedClassNames.orEmpty() + ed.selectedClass.fullName
+            } else {
+              state.dexEditor?.patchedClassNames.orEmpty()
+            }
             state.copy(
               dexEditor = state.dexEditor?.copy(
                 isCompiling = false,
                 isDirty = false,
                 originalJavaCode = ed.javaCode,
                 hasUncommittedDexChanges = false,
+                patchedClassNames = updatedPatched,
                 lastSavedApkPath = outApk.absolutePath,
               ),
               signerApkPath = outApk.absolutePath,

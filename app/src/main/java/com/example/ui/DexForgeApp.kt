@@ -145,13 +145,19 @@ fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
     JavaCodeEditorScreen(
       state = dexEd,
       onSelectClass = viewModel::selectDexClass,
+      onOpenPackageFolder = viewModel::openDexPackageFolder,
+      onNavigateUpFolder = viewModel::navigateUpDexPackageFolder,
+      onOpenClassBrowser = viewModel::openClassBrowser,
+      onReturnToCodeEditor = viewModel::returnToCodeEditorFromBrowser,
+      onCompileAndReturnToBrowser = { viewModel.compileEditedJavaToDex(returnToBrowserOnSuccess = true) },
+      onDiscardAndReturnToBrowser = viewModel::discardEditsAndReturnToClassBrowser,
       onSwitchDexEntry = viewModel::switchActiveDexEntry,
       onSearchQueryChange = viewModel::setDexSearchQuery,
       onModeChange = viewModel::setDecompilerMode,
       onCodeChange = viewModel::updateJavaEditorCode,
       onUndo = viewModel::undoJavaEdit,
       onRedo = viewModel::redoJavaEdit,
-      onCompileToDex = viewModel::compileEditedJavaToDex,
+      onCompileToDex = { viewModel.compileEditedJavaToDex(returnToBrowserOnSuccess = false) },
       onSaveAndSign = { autoSign, overwriteOriginal, createBackup ->
         viewModel.saveAndSignPatchedTarget(autoSign, overwriteOriginal, createBackup)
       },

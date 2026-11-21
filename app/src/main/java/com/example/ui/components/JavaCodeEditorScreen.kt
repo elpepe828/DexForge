@@ -24,10 +24,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -40,9 +37,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.FindReplace
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -57,7 +53,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -96,6 +91,12 @@ import com.example.ui.theme.SyntaxColors
 fun JavaCodeEditorScreen(
   state: DexEditorState,
   onSelectClass: (DexClassInfo) -> Unit,
+  onOpenPackageFolder: (String) -> Unit,
+  onNavigateUpFolder: () -> Unit,
+  onOpenClassBrowser: () -> Unit,
+  onReturnToCodeEditor: () -> Unit,
+  onCompileAndReturnToBrowser: () -> Unit,
+  onDiscardAndReturnToBrowser: () -> Unit,
   onSwitchDexEntry: (String) -> Unit,
   onSearchQueryChange: (String) -> Unit,
   onModeChange: (DecompilerMode) -> Unit,
@@ -109,298 +110,324 @@ fun JavaCodeEditorScreen(
   onDismissSavedBanner: () -> Unit,
   onClose: () -> Unit,
 ) {
-  BackHandler(onBack = onClose)
-
-  var showClassSheet by remember { mutableStateOf(false) }
   var showFindReplace by remember { mutableStateOf(false) }
   var findText by remember { mutableStateOf("") }
   var replaceText by remember { mutableStateOf("") }
   var showBuildLogs by remember { mutableStateOf(false) }
   var showConfirmSaveDialog by remember { mutableStateOf(false) }
+  var showUnsavedReturnDialog by remember { mutableStateOf(false) }
+
+  val requestReturnToExplorer = {
+    if (state.isDirty) {
+      showUnsavedReturnDialog = true
+    } else {
+      onOpenClassBrowser()
+    }
+  }
 
   Surface(
     modifier = Modifier
       .fillMaxSize()
       .windowInsetsPadding(WindowInsets.safeDrawing)
       .imePadding(),
-    color = SyntaxColors.EditorBackground,
+    color = if (state.showClassBrowser) MaterialTheme.colorScheme.background else SyntaxColors.EditorBackground,
   ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
       val isWide = maxWidth >= 720.dp
 
       Column(modifier = Modifier.fillMaxSize()) {
-        // IDE Top Bar
-        Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp) {
-          Column {
-            Row(
-              modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 6.dp, vertical = 4.dp),
-              verticalAlignment = Alignment.CenterVertically,
-            ) {
-              IconButton(
-                onClick = onClose,
-                modifier = Modifier.size(48.dp).testTag("dex_editor_back_btn"),
-              ) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Salir del editor")
-              }
+        if (state.showClassBrowser) {
+          DexClassExplorerView(
+            state = state,
+            onSelectClass = onSelectClass,
+            onOpenPackageFolder = onOpenPackageFolder,
+            onNavigateUpFolder = onNavigateUpFolder,
+            onSwitchDexEntry = onSwitchDexEntry,
+            onSearchQueryChange = onSearchQueryChange,
+            onReturnToOpenClass = onReturnToCodeEditor,
+            onRequestSaveAndSign = { showConfirmSaveDialog = true },
+            onCloseEditor = onClose,
+            modifier = Modifier.weight(1f),
+          )
+        } else {
+          BackHandler(onBack = requestReturnToExplorer)
 
-              if (!isWide) {
-                IconButton(
-                  onClick = { showClassSheet = true },
-                  modifier = Modifier.size(48.dp).testTag("dex_editor_classes_btn"),
-                ) {
-                  Icon(Icons.Default.List, contentDescription = "Lista de clases")
-                }
-              }
-
-              Column(modifier = Modifier.weight(1f)) {
-                Text(
-                  text = buildString {
-                    append(state.selectedClass?.simpleName ?: state.targetDisplayName)
-                    if (state.isDirty) append(" *")
-                  },
-                  style = MaterialTheme.typography.titleSmall,
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                  text = state.selectedClass?.packageName ?: "${state.classes.size} clases",
-                  style = MaterialTheme.typography.labelSmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant,
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis,
-                )
-              }
-
-              IconButton(
-                onClick = onUndo,
-                enabled = state.undoStack.isNotEmpty(),
-                modifier = Modifier.size(48.dp),
-              ) {
-                Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Deshacer")
-              }
-              IconButton(
-                onClick = onRedo,
-                enabled = state.redoStack.isNotEmpty(),
-                modifier = Modifier.size(48.dp),
-              ) {
-                Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Rehacer")
-              }
-              IconButton(
-                onClick = { showFindReplace = !showFindReplace },
-                modifier = Modifier.size(48.dp),
-              ) {
-                Icon(Icons.Default.FindReplace, contentDescription = "Buscar y reemplazar")
-              }
-            }
-
-            // Secondary Toolbar: DEX selector, Java/Smali toggle, Compile & Save/Sign
-            Row(
-              modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-              if (state.dexEntries.size > 1) {
-                var dexMenuOpen by remember { mutableStateOf(false) }
-                Box {
-                  OutlinedButton(onClick = { dexMenuOpen = true }, modifier = Modifier.height(36.dp)) {
-                    Text(state.activeDexEntry, style = MaterialTheme.typography.labelMedium)
-                  }
-                  DropdownMenu(expanded = dexMenuOpen, onDismissRequest = { dexMenuOpen = false }) {
-                    state.dexEntries.forEach { entry ->
-                      DropdownMenuItem(
-                        text = { Text(entry) },
-                        onClick = {
-                          dexMenuOpen = false
-                          onSwitchDexEntry(entry)
-                        },
-                      )
-                    }
-                  }
-                }
-              }
-
-              FilterChip(
-                selected = state.decompilerMode == DecompilerMode.JAVA,
-                onClick = { onModeChange(DecompilerMode.JAVA) },
-                label = { Text("Java") },
-                leadingIcon = { Icon(Icons.Default.Code, null, modifier = Modifier.size(16.dp)) },
-                modifier = Modifier.height(36.dp).testTag("mode_java_chip"),
-              )
-              FilterChip(
-                selected = state.decompilerMode == DecompilerMode.SMALI_INFO,
-                onClick = { onModeChange(DecompilerMode.SMALI_INFO) },
-                label = { Text("Bytecode") },
-                modifier = Modifier.height(36.dp).testTag("mode_bytecode_chip"),
-              )
-
-              Button(
-                onClick = onCompileToDex,
-                enabled = !state.isCompiling && state.selectedClass != null && state.decompilerMode == DecompilerMode.JAVA,
-                colors = ButtonDefaults.buttonColors(
-                  containerColor = MaterialTheme.colorScheme.secondary,
-                  contentColor = MaterialTheme.colorScheme.onSecondary,
-                ),
-                modifier = Modifier.height(36.dp).testTag("compile_java_to_dex_btn"),
-                contentPadding = PaddingValues(horizontal = 12.dp),
-              ) {
-                if (state.isCompiling) {
-                  CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                } else {
-                  Icon(Icons.Default.Build, null, modifier = Modifier.size(16.dp))
-                }
-                Spacer(Modifier.width(6.dp))
-                Text("Compilar → DEX", style = MaterialTheme.typography.labelLarge)
-              }
-
-              Button(
-                onClick = { showConfirmSaveDialog = true },
-                enabled = !state.isCompiling,
-                colors = ButtonDefaults.buttonColors(
-                  containerColor = MaterialTheme.colorScheme.tertiary,
-                  contentColor = MaterialTheme.colorScheme.onTertiary,
-                ),
-                modifier = Modifier.height(36.dp).testTag("save_and_sign_apk_btn"),
-                contentPadding = PaddingValues(horizontal = 12.dp),
-              ) {
-                Icon(
-                  if (state.targetApkPath != null) Icons.Default.VerifiedUser else Icons.Default.Save,
-                  null,
-                  modifier = Modifier.size(16.dp),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                  if (state.targetApkPath != null) "Confirmar y Firmar APK" else "Guardar DEX",
-                  style = MaterialTheme.typography.labelLarge,
-                )
-              }
-            }
-
-            // Find & Replace Bar
-            AnimatedVisibility(visible = showFindReplace) {
+          // IDE Top Bar
+          Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp) {
+            Column {
               Row(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .padding(horizontal = 10.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                  .padding(horizontal = 6.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
               ) {
-                OutlinedTextField(
-                  value = findText,
-                  onValueChange = { findText = it },
-                  placeholder = { Text("Buscar") },
-                  singleLine = true,
-                  modifier = Modifier.weight(1f),
-                )
-                OutlinedTextField(
-                  value = replaceText,
-                  onValueChange = { replaceText = it },
-                  placeholder = { Text("Reemplazar") },
-                  singleLine = true,
-                  modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                  onClick = {
-                    if (findText.isNotEmpty() && state.decompilerMode == DecompilerMode.JAVA) {
-                      onCodeChange(state.javaCode.replace(findText, replaceText))
+                IconButton(
+                  onClick = requestReturnToExplorer,
+                  modifier = Modifier.size(48.dp).testTag("dex_editor_back_btn"),
+                ) {
+                  Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver a carpetas de clases")
+                }
+
+                if (!isWide) {
+                  IconButton(
+                    onClick = requestReturnToExplorer,
+                    modifier = Modifier.size(48.dp).testTag("dex_editor_classes_btn"),
+                  ) {
+                    Icon(Icons.Default.FolderOpen, contentDescription = "Explorador de clases")
+                  }
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                  Text(
+                    text = buildString {
+                      append(state.selectedClass?.let { "${it.simpleName}.java" } ?: state.targetDisplayName)
+                      if (state.isDirty) append(" *")
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                  )
+                  Text(
+                    text = state.selectedClass?.packageName?.ifEmpty { "(paquete raíz)" } ?: "${state.classes.size} clases",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                  )
+                }
+
+                IconButton(
+                  onClick = onUndo,
+                  enabled = state.undoStack.isNotEmpty(),
+                  modifier = Modifier.size(48.dp),
+                ) {
+                  Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Deshacer")
+                }
+                IconButton(
+                  onClick = onRedo,
+                  enabled = state.redoStack.isNotEmpty(),
+                  modifier = Modifier.size(48.dp),
+                ) {
+                  Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Rehacer")
+                }
+                IconButton(
+                  onClick = { showFindReplace = !showFindReplace },
+                  modifier = Modifier.size(48.dp),
+                ) {
+                  Icon(Icons.Default.FindReplace, contentDescription = "Buscar y reemplazar")
+                }
+              }
+
+              // Secondary Toolbar: DEX selector, Java/Smali toggle, Compile & Save/Sign
+              Row(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .horizontalScroll(rememberScrollState())
+                  .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                if (state.dexEntries.size > 1) {
+                  var dexMenuOpen by remember { mutableStateOf(false) }
+                  Box {
+                    OutlinedButton(onClick = { dexMenuOpen = true }, modifier = Modifier.height(36.dp)) {
+                      Text(state.activeDexEntry, style = MaterialTheme.typography.labelMedium)
                     }
-                  },
-                ) {
-                  Text("Todo")
-                }
-              }
-            }
-          }
-        }
-
-        HorizontalDivider()
-
-        // Main Workspace Row (Sidebar on Wide + Code Editor)
-        Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-          if (isWide) {
-            Surface(
-              color = MaterialTheme.colorScheme.surface,
-              modifier = Modifier.width(270.dp).fillMaxHeight(),
-            ) {
-              ClassBrowserContent(
-                classes = state.classes,
-                selectedClass = state.selectedClass,
-                searchQuery = state.searchQuery,
-                onSearchChange = onSearchQueryChange,
-                onSelectClass = onSelectClass,
-              )
-            }
-            HorizontalDivider(modifier = Modifier.width(1.dp).fillMaxHeight())
-          }
-
-          Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-            when {
-              state.isLoadingIndex -> {
-                Column(
-                  modifier = Modifier.align(Alignment.Center),
-                  horizontalAlignment = Alignment.CenterHorizontally,
-                  verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                  CircularProgressIndicator()
-                  Text("Descompilando índice DEX con Jadx...", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-              }
-              state.isDecompiling -> {
-                Column(
-                  modifier = Modifier.align(Alignment.Center),
-                  horizontalAlignment = Alignment.CenterHorizontally,
-                  verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                  CircularProgressIndicator()
-                  Text("Generando código Java...", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-              }
-              state.selectedClass == null -> {
-                Column(
-                  modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                  horizontalAlignment = Alignment.CenterHorizontally,
-                  verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                  Icon(Icons.Default.Code, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(48.dp))
-                  Text("Selecciona una clase para editar en Java", style = MaterialTheme.typography.titleMedium)
-                  if (!isWide) {
-                    Button(onClick = { showClassSheet = true }) {
-                      Text("Explorar ${state.classes.size} clases")
+                    DropdownMenu(expanded = dexMenuOpen, onDismissRequest = { dexMenuOpen = false }) {
+                      state.dexEntries.forEach { entry ->
+                        DropdownMenuItem(
+                          text = { Text(entry) },
+                          onClick = {
+                            dexMenuOpen = false
+                            onSwitchDexEntry(entry)
+                          },
+                        )
+                      }
                     }
                   }
                 }
-              }
-              else -> {
-                val displayedText = if (state.decompilerMode == DecompilerMode.JAVA) {
-                  state.javaCode
-                } else {
-                  state.smaliCode
-                }
-                JavaSyntaxCodeCanvas(
-                  code = displayedText,
-                  readOnly = state.decompilerMode != DecompilerMode.JAVA,
-                  onCodeChange = onCodeChange,
-                  modifier = Modifier.fillMaxSize(),
+
+                FilterChip(
+                  selected = state.decompilerMode == DecompilerMode.JAVA,
+                  onClick = { onModeChange(DecompilerMode.JAVA) },
+                  label = { Text("Java") },
+                  leadingIcon = { Icon(Icons.Default.Code, null, modifier = Modifier.size(16.dp)) },
+                  modifier = Modifier.height(36.dp).testTag("mode_java_chip"),
                 )
+                FilterChip(
+                  selected = state.decompilerMode == DecompilerMode.SMALI_INFO,
+                  onClick = { onModeChange(DecompilerMode.SMALI_INFO) },
+                  label = { Text("Bytecode") },
+                  modifier = Modifier.height(36.dp).testTag("mode_bytecode_chip"),
+                )
+
+                Button(
+                  onClick = onCompileToDex,
+                  enabled = !state.isCompiling && state.selectedClass != null && state.decompilerMode == DecompilerMode.JAVA,
+                  colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.secondary,
+                    contentColor = MaterialTheme.colorScheme.onSecondary,
+                  ),
+                  modifier = Modifier.height(36.dp).testTag("compile_java_to_dex_btn"),
+                  contentPadding = PaddingValues(horizontal = 12.dp),
+                ) {
+                  if (state.isCompiling) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                  } else {
+                    Icon(Icons.Default.Build, null, modifier = Modifier.size(16.dp))
+                  }
+                  Spacer(Modifier.width(6.dp))
+                  Text("Compilar → DEX", style = MaterialTheme.typography.labelLarge)
+                }
+
+                Button(
+                  onClick = { showConfirmSaveDialog = true },
+                  enabled = !state.isCompiling,
+                  colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.tertiary,
+                    contentColor = MaterialTheme.colorScheme.onTertiary,
+                  ),
+                  modifier = Modifier.height(36.dp).testTag("save_and_sign_apk_btn"),
+                  contentPadding = PaddingValues(horizontal = 12.dp),
+                ) {
+                  Icon(
+                    if (state.targetApkPath != null) Icons.Default.VerifiedUser else Icons.Default.Save,
+                    null,
+                    modifier = Modifier.size(16.dp),
+                  )
+                  Spacer(Modifier.width(6.dp))
+                  Text(
+                    if (state.targetApkPath != null) "Confirmar y Firmar APK" else "Guardar DEX",
+                    style = MaterialTheme.typography.labelLarge,
+                  )
+                }
+              }
+
+              // Find & Replace Bar
+              AnimatedVisibility(visible = showFindReplace) {
+                Row(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                  horizontalArrangement = Arrangement.spacedBy(6.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  OutlinedTextField(
+                    value = findText,
+                    onValueChange = { findText = it },
+                    placeholder = { Text("Buscar") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                  )
+                  OutlinedTextField(
+                    value = replaceText,
+                    onValueChange = { replaceText = it },
+                    placeholder = { Text("Reemplazar") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                  )
+                  TextButton(
+                    onClick = {
+                      if (findText.isNotEmpty() && state.decompilerMode == DecompilerMode.JAVA) {
+                        onCodeChange(state.javaCode.replace(findText, replaceText))
+                      }
+                    },
+                  ) {
+                    Text("Todo")
+                  }
+                }
               }
             }
           }
+
+          HorizontalDivider()
+
+          // Main Workspace Row (Folder Tree Sidebar on Wide + Code Editor)
+          Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            if (isWide) {
+              Surface(
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.width(290.dp).fillMaxHeight(),
+              ) {
+                DexPackageBrowserContent(
+                  classes = state.classes,
+                  currentPackagePath = state.currentPackagePath,
+                  selectedClass = state.selectedClass,
+                  patchedClassNames = state.patchedClassNames,
+                  searchQuery = state.searchQuery,
+                  activeDexEntry = state.activeDexEntry,
+                  onSearchChange = onSearchQueryChange,
+                  onOpenPackageFolder = onOpenPackageFolder,
+                  onNavigateUpFolder = onNavigateUpFolder,
+                  onSelectClass = onSelectClass,
+                )
+              }
+              HorizontalDivider(modifier = Modifier.width(1.dp).fillMaxHeight())
+            }
+
+            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+              when {
+                state.isLoadingIndex -> {
+                  Column(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                  ) {
+                    CircularProgressIndicator()
+                    Text("Descompilando índice DEX con Jadx...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                  }
+                }
+                state.isDecompiling -> {
+                  Column(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                  ) {
+                    CircularProgressIndicator()
+                    Text("Generando código Java editable...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                  }
+                }
+                state.selectedClass == null -> {
+                  Column(
+                    modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                  ) {
+                    Icon(Icons.Default.Code, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(48.dp))
+                    Text("Selecciona una clase para editar en Java", style = MaterialTheme.typography.titleMedium)
+                    Button(onClick = onOpenClassBrowser) {
+                      Text("Abrir carpetas de clases")
+                    }
+                  }
+                }
+                else -> {
+                  val displayedText = if (state.decompilerMode == DecompilerMode.JAVA) {
+                    state.javaCode
+                  } else {
+                    state.smaliCode
+                  }
+                  JavaSyntaxCodeCanvas(
+                    code = displayedText,
+                    readOnly = state.decompilerMode != DecompilerMode.JAVA,
+                    onCodeChange = onCodeChange,
+                    modifier = Modifier.fillMaxSize(),
+                  )
+                }
+              }
+            }
+          }
+
+          // Compile Result Banner
+          state.lastCompileResult?.let { result ->
+            CompileStatusBanner(
+              result = result,
+              expanded = showBuildLogs,
+              onToggleExpand = { showBuildLogs = !showBuildLogs },
+            )
+          }
         }
 
-        // Compile Result Banner
-        state.lastCompileResult?.let { result ->
-          CompileStatusBanner(
-            result = result,
-            expanded = showBuildLogs,
-            onToggleExpand = { showBuildLogs = !showBuildLogs },
-          )
-        }
-
-        // Ready-to-use Saved & Signed APK Banner
+        // Ready-to-use Saved & Signed APK Banner (shown in both Browser and Editor)
         state.lastSavedApkPath?.let { savedPath ->
           val savedFile = remember(savedPath) { java.io.File(savedPath) }
           Surface(
@@ -452,120 +479,39 @@ fun JavaCodeEditorScreen(
         )
       }
 
-      if (showClassSheet && !isWide) {
-        ModalBottomSheet(
-          onDismissRequest = { showClassSheet = false },
-        ) {
-          Box(modifier = Modifier.fillMaxWidth().height(520.dp)) {
-            ClassBrowserContent(
-              classes = state.classes,
-              selectedClass = state.selectedClass,
-              searchQuery = state.searchQuery,
-              onSearchChange = onSearchQueryChange,
-              onSelectClass = { cls ->
-                showClassSheet = false
-                onSelectClass(cls)
-              },
-            )
-          }
-        }
-      }
-    }
-  }
-}
-
-@Composable
-private fun ClassBrowserContent(
-  classes: List<DexClassInfo>,
-  selectedClass: DexClassInfo?,
-  searchQuery: String,
-  onSearchChange: (String) -> Unit,
-  onSelectClass: (DexClassInfo) -> Unit,
-) {
-  val filtered = remember(classes, searchQuery) {
-    val q = searchQuery.trim()
-    if (q.isEmpty()) classes
-    else classes.filter {
-      it.fullName.contains(q, ignoreCase = true)
-    }
-  }
-
-  Column(modifier = Modifier.fillMaxSize()) {
-    OutlinedTextField(
-      value = searchQuery,
-      onValueChange = onSearchChange,
-      placeholder = { Text("Buscar clase o paquete...") },
-      leadingIcon = { Icon(Icons.Default.Search, null) },
-      trailingIcon = {
-        if (searchQuery.isNotEmpty()) {
-          IconButton(onClick = { onSearchChange("") }) {
-            Icon(Icons.Default.Close, "Limpiar")
-          }
-        }
-      },
-      singleLine = true,
-      modifier = Modifier
-        .fillMaxWidth()
-        .padding(10.dp),
-    )
-
-    Text(
-      text = "${filtered.size} clases encontradas",
-      style = MaterialTheme.typography.labelSmall,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-      modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-    )
-
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-      items(filtered, key = { it.fullName }) { cls ->
-        val selected = cls.fullName == selectedClass?.fullName
-        Row(
-          modifier = Modifier
-            .fillMaxWidth()
-            .background(
-              if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-              else MaterialTheme.colorScheme.surface
-            )
-            .clickable { onSelectClass(cls) }
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-          Surface(
-            shape = RoundedCornerShape(6.dp),
-            color = if (cls.isInterface) MaterialTheme.colorScheme.secondaryContainer
-            else MaterialTheme.colorScheme.primaryContainer,
-            modifier = Modifier.size(26.dp),
-          ) {
-            Box(contentAlignment = Alignment.Center) {
-              Text(
-                text = when {
-                  cls.isInterface -> "I"
-                  cls.isEnum -> "E"
-                  else -> "C"
-                },
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-              )
+      if (showUnsavedReturnDialog) {
+        AlertDialog(
+          onDismissRequest = { showUnsavedReturnDialog = false },
+          title = { Text("Cambios Java sin compilar") },
+          text = {
+            Text("Editaste ${state.selectedClass?.simpleName ?: "esta clase"}. ¿Quieres compilar los cambios al DEX antes de volver al selector de clases?")
+          },
+          confirmButton = {
+            Button(
+              onClick = {
+                showUnsavedReturnDialog = false
+                onCompileAndReturnToBrowser()
+              }
+            ) {
+              Text("Compilar y volver")
             }
-          }
-          Column(modifier = Modifier.weight(1f)) {
-            Text(
-              text = cls.simpleName,
-              style = MaterialTheme.typography.bodyMedium,
-              fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-              text = "${cls.packageName} • ${cls.methodCount} mét.",
-              style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
-            )
-          }
-        }
+          },
+          dismissButton = {
+            Row {
+              TextButton(
+                onClick = {
+                  showUnsavedReturnDialog = false
+                  onDiscardAndReturnToBrowser()
+                }
+              ) {
+                Text("Descartar")
+              }
+              TextButton(onClick = { showUnsavedReturnDialog = false }) {
+                Text("Cancelar")
+              }
+            }
+          },
+        )
       }
     }
   }

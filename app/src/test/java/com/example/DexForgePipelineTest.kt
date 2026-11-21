@@ -190,4 +190,34 @@ class DexForgePipelineTest {
     }
     assertTrue("Missing classes in Android SDK: $missing", missing.isEmpty())
   }
+
+  @Test
+  fun packageFolderTree_navigatesFoldersAndDirectClasses() {
+    val classes = listOf(
+      com.example.model.DexClassInfo("com.example.app.MainActivity", "com.example.app", "MainActivity", "classes.dex", 4, 2, false, false),
+      com.example.model.DexClassInfo("com.example.app.BuildConfig", "com.example.app", "BuildConfig", "classes.dex", 1, 3, false, false),
+      com.example.model.DexClassInfo("com.example.ui.Theme", "com.example.ui", "Theme", "classes.dex", 2, 1, false, false),
+      com.example.model.DexClassInfo("RootHelper", "", "RootHelper", "classes.dex", 1, 0, false, false),
+    )
+    val patched = setOf("com.example.app.MainActivity")
+
+    val root = com.example.ui.components.buildDexFolderListing(classes, "", patched)
+    assertEquals(listOf("com"), root.folders.map { it.name })
+    assertEquals(3, root.folders.first().totalClasses)
+    assertEquals(1, root.folders.first().patchedCount)
+    assertEquals(listOf("RootHelper"), root.classes.map { it.simpleName })
+
+    val comLevel = com.example.ui.components.buildDexFolderListing(classes, "com", patched)
+    assertEquals(listOf("example"), comLevel.folders.map { it.name })
+    assertTrue(comLevel.classes.isEmpty())
+
+    val exampleLevel = com.example.ui.components.buildDexFolderListing(classes, "com.example", patched)
+    assertEquals(listOf("app", "ui"), exampleLevel.folders.map { it.name })
+    assertEquals(2, exampleLevel.folders[0].totalClasses)
+    assertEquals(1, exampleLevel.folders[0].patchedCount)
+
+    val appLevel = com.example.ui.components.buildDexFolderListing(classes, "com.example.app", patched)
+    assertTrue(appLevel.folders.isEmpty())
+    assertEquals(listOf("BuildConfig", "MainActivity"), appLevel.classes.map { it.simpleName })
+  }
 }
