@@ -1,0 +1,6 @@
+{
+  "name": "DexForge",
+  "description": "Gestor de archivos de doble panel, visor de APK, descompilador DEX a código Java, editor de código fuente, compilador a DEX y firmador de APK v1/v2/v3.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
