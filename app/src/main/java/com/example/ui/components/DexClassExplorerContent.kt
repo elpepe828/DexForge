@@ -52,9 +52,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.model.DexClassInfo
 import com.example.model.DexEditorState
 import com.example.ui.theme.JetBrainsMonoFamily
@@ -157,26 +159,24 @@ fun DexClassExplorerView(
             },
             modifier = Modifier.size(48.dp).testTag("dex_explorer_close_btn"),
           ) {
-            Icon(Icons.Default.Close, contentDescription = "Cerrar explorador DEX")
+            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.desc_close_explorer))
           }
 
           Column(modifier = Modifier.weight(1f)) {
             Text(
-              text = "Clases DEX → Java",
+              text = stringResource(R.string.explorer_title),
               style = MaterialTheme.typography.titleMedium,
               fontWeight = FontWeight.Bold,
               maxLines = 1,
               overflow = TextOverflow.Ellipsis,
             )
+            val modifSuffix = if (state.patchedClassNames.isNotEmpty()) {
+              stringResource(R.string.explorer_modif_suffix, state.patchedClassNames.size)
+            } else {
+              ""
+            }
             Text(
-              text = buildString {
-                append(state.targetDisplayName)
-                append(" • ")
-                append(state.activeDexEntry)
-                if (state.patchedClassNames.isNotEmpty()) {
-                  append(" • ${state.patchedClassNames.size} modif.")
-                }
-              },
+              text = "${state.targetDisplayName} • ${state.activeDexEntry}$modifSuffix",
               style = MaterialTheme.typography.labelSmall,
               color = MaterialTheme.colorScheme.onSurfaceVariant,
               maxLines = 1,
@@ -201,7 +201,7 @@ fun DexClassExplorerView(
             )
             Spacer(Modifier.width(6.dp))
             Text(
-              text = if (state.targetApkPath != null) "Confirmar y Firmar" else "Guardar DEX",
+              text = stringResource(if (state.targetApkPath != null) R.string.btn_confirm_and_sign else R.string.btn_save_dex),
               style = MaterialTheme.typography.labelLarge,
             )
           }
@@ -235,7 +235,7 @@ fun DexClassExplorerView(
                 Icon(Icons.Default.Code, null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
                 Text(
-                  text = "Volver a ${openCls.simpleName}.java",
+                  text = stringResource(R.string.btn_resume_class, openCls.simpleName),
                   style = MaterialTheme.typography.labelMedium,
                   maxLines = 1,
                 )
@@ -256,7 +256,7 @@ fun DexClassExplorerView(
         ) {
           CircularProgressIndicator()
           Text(
-            text = "Cargando paquetes y clases de ${state.activeDexEntry}...",
+            text = stringResource(R.string.loading_dex_packages, state.activeDexEntry),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
           )
@@ -282,9 +282,9 @@ fun DexClassExplorerView(
   if (showExitConfirm) {
     AlertDialog(
       onDismissRequest = { showExitConfirm = false },
-      title = { Text("Cambios sin aplicar al APK") },
+      title = { Text(stringResource(R.string.dialog_unapplied_title)) },
       text = {
-        Text("Has compilado ${state.patchedClassNames.size} clase(s) en DEX pero aún no has guardado ni firmado el resultado final.")
+        Text(stringResource(R.string.dialog_unapplied_body, state.patchedClassNames.size))
       },
       confirmButton = {
         Button(
@@ -293,7 +293,7 @@ fun DexClassExplorerView(
             onRequestSaveAndSign()
           }
         ) {
-          Text(if (state.targetApkPath != null) "Confirmar y Firmar" else "Guardar DEX")
+          Text(stringResource(if (state.targetApkPath != null) R.string.btn_confirm_and_sign else R.string.btn_save_dex))
         }
       },
       dismissButton = {
@@ -304,10 +304,10 @@ fun DexClassExplorerView(
               onCloseEditor()
             }
           ) {
-            Text("Salir sin guardar")
+            Text(stringResource(R.string.btn_exit_without_saving))
           }
           TextButton(onClick = { showExitConfirm = false }) {
-            Text("Cancelar")
+            Text(stringResource(R.string.action_cancel))
           }
         }
       },
@@ -348,12 +348,12 @@ fun DexPackageBrowserContent(
     OutlinedTextField(
       value = searchQuery,
       onValueChange = onSearchChange,
-      placeholder = { Text("Buscar clase o paquete...") },
+      placeholder = { Text(stringResource(R.string.hint_search_class_or_pkg)) },
       leadingIcon = { Icon(Icons.Default.Search, null) },
       trailingIcon = {
         if (searchQuery.isNotEmpty()) {
           IconButton(onClick = { onSearchChange("") }) {
-            Icon(Icons.Default.Close, "Limpiar búsqueda")
+            Icon(Icons.Default.Close, stringResource(R.string.desc_clear_search))
           }
         }
       },
@@ -409,7 +409,7 @@ fun DexPackageBrowserContent(
       }
     } else {
       Text(
-        text = "${searchMatches.size} coincidencia(s) en todo $activeDexEntry",
+        text = stringResource(R.string.search_matches_count, searchMatches.size, activeDexEntry),
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
@@ -424,7 +424,7 @@ fun DexPackageBrowserContent(
       if (isSearching) {
         if (searchMatches.isEmpty()) {
           item {
-            EmptyBrowserNotice("No se encontraron clases para \"$trimmedQuery\"")
+            EmptyBrowserNotice(stringResource(R.string.empty_search_classes, trimmedQuery))
           }
         } else {
           items(searchMatches, key = { it.fullName }) { cls ->
@@ -459,7 +459,7 @@ fun DexPackageBrowserContent(
                 Box(contentAlignment = Alignment.Center) {
                   Icon(
                     imageVector = Icons.Default.ArrowUpward,
-                    contentDescription = "Subir carpeta",
+                    contentDescription = stringResource(R.string.desc_up_folder),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),
                   )
@@ -473,7 +473,7 @@ fun DexPackageBrowserContent(
                   fontFamily = JetBrainsMonoFamily,
                 )
                 Text(
-                  text = "Subir a la carpeta anterior",
+                  text = stringResource(R.string.up_folder_subtitle),
                   style = MaterialTheme.typography.labelSmall,
                   color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -527,7 +527,7 @@ fun DexPackageBrowserContent(
                     color = MaterialTheme.colorScheme.tertiaryContainer,
                   ) {
                     Text(
-                      text = "${folder.patchedCount} modif.",
+                      text = stringResource(R.string.badge_modified_count, folder.patchedCount),
                       style = MaterialTheme.typography.labelSmall,
                       color = MaterialTheme.colorScheme.onTertiaryContainer,
                       modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
@@ -536,7 +536,7 @@ fun DexPackageBrowserContent(
                 }
               }
               Text(
-                text = "${folder.totalClasses} clase(s)",
+                text = stringResource(R.string.folder_classes_count, folder.totalClasses),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
@@ -565,7 +565,7 @@ fun DexPackageBrowserContent(
 
         if (listing.folders.isEmpty() && listing.classes.isEmpty()) {
           item {
-            EmptyBrowserNotice("Esta carpeta no contiene clases DEX")
+            EmptyBrowserNotice(stringResource(R.string.empty_folder_dex_classes))
           }
         }
       }
@@ -673,7 +673,7 @@ private fun DexClassRow(
                 modifier = Modifier.size(11.dp),
               )
               Text(
-                text = "Modificada",
+                text = stringResource(R.string.badge_modified),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onTertiaryContainer,
               )
@@ -682,13 +682,12 @@ private fun DexClassRow(
         }
       }
 
+      val metricsText = stringResource(R.string.class_metrics, cls.methodCount, cls.fieldCount)
       Text(
-        text = buildString {
-          if (showFullPackage && cls.packageName.isNotEmpty()) {
-            append(cls.packageName)
-            append(" • ")
-          }
-          append("${cls.methodCount} mét. • ${cls.fieldCount} camp.")
+        text = if (showFullPackage && cls.packageName.isNotEmpty()) {
+          "${cls.packageName} • $metricsText"
+        } else {
+          metricsText
         },
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -702,7 +701,7 @@ private fun DexClassRow(
       color = MaterialTheme.colorScheme.surfaceVariant,
     ) {
       Text(
-        text = "Java",
+        text = stringResource(R.string.tab_java),
         style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.Bold,
         color = MaterialTheme.colorScheme.primary,

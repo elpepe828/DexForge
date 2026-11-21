@@ -46,8 +46,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.model.KeystoreProfile
 import com.example.model.SignatureReport
 import com.example.ui.theme.JetBrainsMonoFamily
@@ -91,7 +93,7 @@ fun SignerStudioScreen(
       Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
           Icon(Icons.Default.Android, null, tint = MaterialTheme.colorScheme.tertiary)
-          Text("1. APK a firmar o verificar", style = MaterialTheme.typography.titleMedium)
+          Text(stringResource(R.string.signer_step_1), style = MaterialTheme.typography.titleMedium)
         }
 
         if (selectedApkPath != null) {
@@ -109,7 +111,7 @@ fun SignerStudioScreen(
           )
         } else {
           Text(
-            text = "Ningún APK seleccionado.",
+            text = stringResource(R.string.no_apk_selected),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
           )
@@ -120,7 +122,7 @@ fun SignerStudioScreen(
             onClick = { showApkPickerDialog = true },
             modifier = Modifier.weight(1f).height(48.dp),
           ) {
-            Text("Elegir de Workspace")
+            Text(stringResource(R.string.btn_choose_workspace))
           }
           OutlinedButton(
             onClick = onImportExternalApk,
@@ -128,7 +130,7 @@ fun SignerStudioScreen(
           ) {
             Icon(Icons.Default.UploadFile, null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
-            Text("Importar APK")
+            Text(stringResource(R.string.btn_import_apk))
           }
         }
 
@@ -151,14 +153,16 @@ fun SignerStudioScreen(
                   tint = if (rep.isVerified) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
                 )
                 Text(
-                  text = if (rep.isVerified) "Firma válida (apksig)" else "Firma inválida o ausente",
+                  text = stringResource(if (rep.isVerified) R.string.sig_valid_apksig else R.string.sig_invalid_absent),
                   style = MaterialTheme.typography.titleSmall,
                 )
               }
+              val okLabel = stringResource(R.string.sig_scheme_ok)
+              val noLabel = stringResource(R.string.sig_scheme_no)
               Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("v1: ${if (rep.v1Verified) "OK" else "No"}", style = MaterialTheme.typography.labelMedium)
-                Text("v2: ${if (rep.v2Verified) "OK" else "No"}", style = MaterialTheme.typography.labelMedium)
-                Text("v3: ${if (rep.v3Verified) "OK" else "No"}", style = MaterialTheme.typography.labelMedium)
+                Text("v1: ${if (rep.v1Verified) okLabel else noLabel}", style = MaterialTheme.typography.labelMedium)
+                Text("v2: ${if (rep.v2Verified) okLabel else noLabel}", style = MaterialTheme.typography.labelMedium)
+                Text("v3: ${if (rep.v3Verified) okLabel else noLabel}", style = MaterialTheme.typography.labelMedium)
               }
               rep.signerSubject?.let {
                 Text(it, style = MaterialTheme.typography.labelSmall)
@@ -185,16 +189,16 @@ fun SignerStudioScreen(
         ) {
           Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(Icons.Default.Key, null, tint = MaterialTheme.colorScheme.secondary)
-            Text("2. Keystore de firma", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.signer_step_2), style = MaterialTheme.typography.titleMedium)
           }
           Row {
             TextButton(onClick = onRequestImportKeystore) {
-              Text("Importar")
+              Text(stringResource(R.string.action_import))
             }
             TextButton(onClick = { showCreateKeystoreDialog = true }) {
               Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
               Spacer(Modifier.width(4.dp))
-              Text("Crear")
+              Text(stringResource(R.string.action_create_short))
             }
           }
         }
@@ -218,7 +222,7 @@ fun SignerStudioScreen(
               Column(modifier = Modifier.weight(1f)) {
                 Text(profile.displayName, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                 Text(
-                  text = "Alias: ${profile.alias} • ${profile.storeType}",
+                  text = stringResource(R.string.keystore_alias_type, profile.alias, profile.storeType),
                   style = MaterialTheme.typography.labelSmall,
                   color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -240,23 +244,23 @@ fun SignerStudioScreen(
       border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
       Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("3. Esquemas de firma APK", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.signer_step_3), style = MaterialTheme.typography.titleMedium)
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           FilterChip(
             selected = signV1,
             onClick = { onToggleSchemes(!signV1, signV2, signV3) },
-            label = { Text("v1 (JAR)") },
+            label = { Text(stringResource(R.string.scheme_v1)) },
           )
           FilterChip(
             selected = signV2,
             onClick = { onToggleSchemes(signV1, !signV2, signV3) },
-            label = { Text("v2 (APK)") },
+            label = { Text(stringResource(R.string.scheme_v2)) },
           )
           FilterChip(
             selected = signV3,
             onClick = { onToggleSchemes(signV1, signV2, !signV3) },
-            label = { Text("v3 (Key Rotation)") },
+            label = { Text(stringResource(R.string.scheme_v3)) },
           )
         }
 
@@ -274,7 +278,7 @@ fun SignerStudioScreen(
             Icon(Icons.Default.VerifiedUser, null)
           }
           Spacer(Modifier.width(8.dp))
-          Text("Firmar APK ahora")
+          Text(stringResource(R.string.btn_sign_apk_now))
         }
 
         if (selectedApkPath != null) {
@@ -282,7 +286,7 @@ fun SignerStudioScreen(
             onClick = { onExportSignedApk(File(selectedApkPath)) },
             modifier = Modifier.fillMaxWidth().height(48.dp),
           ) {
-            Text("Exportar APK actual al dispositivo...")
+            Text(stringResource(R.string.btn_export_current_apk))
           }
         }
       }
@@ -292,11 +296,11 @@ fun SignerStudioScreen(
   if (showApkPickerDialog) {
     AlertDialog(
       onDismissRequest = { showApkPickerDialog = false },
-      title = { Text("Seleccionar APK") },
+      title = { Text(stringResource(R.string.dialog_select_apk)) },
       text = {
         Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
           if (workspaceApks.isEmpty()) {
-            Text("No hay APKs en Workspace todavía.")
+            Text(stringResource(R.string.no_workspace_apks))
           } else {
             workspaceApks.forEach { file ->
               Surface(
@@ -319,7 +323,7 @@ fun SignerStudioScreen(
         }
       },
       confirmButton = {
-        TextButton(onClick = { showApkPickerDialog = false }) { Text("Cerrar") }
+        TextButton(onClick = { showApkPickerDialog = false }) { Text(stringResource(R.string.action_close)) }
       },
     )
   }
@@ -340,7 +344,7 @@ private fun CreateKeystoreDialog(
   onDismiss: () -> Unit,
   onCreate: (String, String, String, String, String, String) -> Unit,
 ) {
-  var name by remember { mutableStateOf("MiFirmaRelease") }
+  var name by remember { mutableStateOf("ReleaseKeystore") }
   var alias by remember { mutableStateOf("upload") }
   var storePass by remember { mutableStateOf("123456") }
   var keyPass by remember { mutableStateOf("123456") }
@@ -349,27 +353,27 @@ private fun CreateKeystoreDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text("Crear Keystore PKCS#12 (RSA 2048)") },
+    title = { Text(stringResource(R.string.dialog_create_keystore)) },
     text = {
       Column(
         modifier = Modifier.verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp),
       ) {
-        OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Nombre del perfil") }, singleLine = true)
-        OutlinedTextField(value = alias, onValueChange = { alias = it }, label = { Text("Alias") }, singleLine = true)
-        OutlinedTextField(value = storePass, onValueChange = { storePass = it }, label = { Text("Contraseña Keystore") }, singleLine = true)
-        OutlinedTextField(value = keyPass, onValueChange = { keyPass = it }, label = { Text("Contraseña Clave") }, singleLine = true)
-        OutlinedTextField(value = commonName, onValueChange = { commonName = it }, label = { Text("CN (Nombre común)") }, singleLine = true)
-        OutlinedTextField(value = org, onValueChange = { org = it }, label = { Text("Organización") }, singleLine = true)
+        OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(stringResource(R.string.label_profile_name)) }, singleLine = true)
+        OutlinedTextField(value = alias, onValueChange = { alias = it }, label = { Text(stringResource(R.string.label_alias)) }, singleLine = true)
+        OutlinedTextField(value = storePass, onValueChange = { storePass = it }, label = { Text(stringResource(R.string.label_keystore_password)) }, singleLine = true)
+        OutlinedTextField(value = keyPass, onValueChange = { keyPass = it }, label = { Text(stringResource(R.string.label_key_password)) }, singleLine = true)
+        OutlinedTextField(value = commonName, onValueChange = { commonName = it }, label = { Text(stringResource(R.string.label_common_name)) }, singleLine = true)
+        OutlinedTextField(value = org, onValueChange = { org = it }, label = { Text(stringResource(R.string.label_organization)) }, singleLine = true)
       }
     },
     confirmButton = {
       TextButton(onClick = { onCreate(name, alias, storePass, keyPass, commonName, org) }) {
-        Text("Generar")
+        Text(stringResource(R.string.btn_generate))
       }
     },
     dismissButton = {
-      TextButton(onClick = onDismiss) { Text("Cancelar") }
+      TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
     },
   )
 }

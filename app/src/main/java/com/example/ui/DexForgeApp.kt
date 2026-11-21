@@ -2,9 +2,12 @@ package com.example.ui
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.LocalActivityResultRegistryOwner
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -27,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BuildCircle
 import androidx.compose.material.icons.filled.FolderCopy
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.VerifiedUser
@@ -44,6 +48,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -56,6 +61,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -63,28 +69,62 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.R
 import com.example.ui.components.ApkInspectorDialog
 import com.example.ui.components.FilePaneCard
 import com.example.ui.components.JavaCodeEditorScreen
 import com.example.ui.components.SignerStudioScreen
 import com.example.ui.components.TextFileEditorScreen
+import com.example.util.LocaleManager
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
-  val context = LocalContext.current
+  val activityContext = LocalContext.current
+  val activityResultRegistryOwner = LocalActivityResultRegistryOwner.current
+  val onBackPressedDispatcherOwner = LocalOnBackPressedDispatcherOwner.current
+  val localizedContext = remember(activityContext, state.appLanguageTag) {
+    LocaleManager.wrapActivityContextForLocale(activityContext, state.appLanguageTag)
+  }
+
+  val providedValues = buildList {
+    add(LocalContext provides localizedContext)
+    add(LocalConfiguration provides localizedContext.resources.configuration)
+    activityResultRegistryOwner?.let { add(LocalActivityResultRegistryOwner provides it) }
+    onBackPressedDispatcherOwner?.let { add(LocalOnBackPressedDispatcherOwner provides it) }
+  }.toTypedArray()
+
+  CompositionLocalProvider(*providedValues) {
+    DexForgeAppBody(
+      viewModel = viewModel,
+      state = state,
+      activityContext = activityContext,
+    )
+  }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DexForgeAppBody(
+  viewModel: MainViewModel,
+  state: MainUiState,
+  activityContext: android.content.Context,
+) {
   val snackbarHostState = remember { SnackbarHostState() }
 
   var pendingKeystoreUri by remember { mutableStateOf<Uri?>(null) }
+  var showLanguageDialog by remember { mutableStateOf(false) }
 
   LaunchedEffect(state.statusMessage) {
     state.statusMessage?.let { msg ->
@@ -106,7 +146,7 @@ fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
   ) { uri ->
     if (uri != null) {
       runCatching {
-        context.contentResolver.takePersistableUriPermission(
+        activityContext.contentResolver.takePersistableUriPermission(
           uri,
           Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
         )
@@ -135,9 +175,12 @@ fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
     }
   }
 
+  val shareContext = LocalContext.current
   val shareFile: (File) -> Unit = { file ->
     val intent = viewModel.buildShareIntent(file)
-    context.startActivity(Intent.createChooser(intent, "Compartir ${file.name}"))
+    activityContext.startActivity(
+      Intent.createChooser(intent, shareContext.getString(R.string.share_chooser_title, file.name))
+    )
   }
 
   // Fullscreen DEX -> Java Editor overlay
@@ -193,14 +236,14 @@ fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
           NavigationRailItem(
             selected = state.destination == MainNavDestination.DUAL_FILES,
             onClick = { viewModel.setDestination(MainNavDestination.DUAL_FILES) },
-            icon = { Icon(Icons.Default.FolderCopy, contentDescription = "Gestor Dual") },
-            label = { Text("Gestor") },
+            icon = { Icon(Icons.Default.FolderCopy, contentDescription = stringResource(R.string.nav_dual_manager)) },
+            label = { Text(stringResource(R.string.nav_manager_short)) },
           )
           NavigationRailItem(
             selected = state.destination == MainNavDestination.SIGNER_STUDIO,
             onClick = { viewModel.setDestination(MainNavDestination.SIGNER_STUDIO) },
-            icon = { Icon(Icons.Default.VerifiedUser, contentDescription = "Firmador APK") },
-            label = { Text("Firmador") },
+            icon = { Icon(Icons.Default.VerifiedUser, contentDescription = stringResource(R.string.nav_apk_signer)) },
+            label = { Text(stringResource(R.string.nav_signer_short)) },
           )
         }
       }
@@ -217,7 +260,7 @@ fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
             title = {
               Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                  text = "DexForge",
+                  text = stringResource(R.string.app_name),
                   style = MaterialTheme.typography.titleLarge,
                   fontWeight = FontWeight.Bold,
                 )
@@ -226,7 +269,7 @@ fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
                   color = MaterialTheme.colorScheme.primaryContainer,
                 ) {
                   Text(
-                    text = "DEX → JAVA",
+                    text = stringResource(R.string.badge_dex_to_java),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                     fontWeight = FontWeight.Bold,
@@ -237,10 +280,16 @@ fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
             },
             actions = {
               IconButton(
+                onClick = { showLanguageDialog = true },
+                modifier = Modifier.size(48.dp).testTag("language_picker_btn"),
+              ) {
+                Icon(Icons.Default.Language, contentDescription = stringResource(R.string.menu_language))
+              }
+              IconButton(
                 onClick = { viewModel.refreshBothPanes() },
                 modifier = Modifier.size(48.dp).testTag("refresh_panes_btn"),
               ) {
-                Icon(Icons.Default.Refresh, contentDescription = "Actualizar paneles")
+                Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.desc_refresh_panes))
               }
               var topMenuOpen by remember { mutableStateOf(false) }
               Box {
@@ -248,11 +297,11 @@ fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
                   onClick = { topMenuOpen = true },
                   modifier = Modifier.size(48.dp),
                 ) {
-                  Icon(Icons.Default.MoreVert, contentDescription = "Menú principal")
+                  Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.desc_main_menu))
                 }
                 DropdownMenu(expanded = topMenuOpen, onDismissRequest = { topMenuOpen = false }) {
                   DropdownMenuItem(
-                    text = { Text("Importar APK / DEX / archivo") },
+                    text = { Text(stringResource(R.string.menu_import_file)) },
                     leadingIcon = { Icon(Icons.Default.Add, null) },
                     onClick = {
                       topMenuOpen = false
@@ -260,11 +309,19 @@ fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
                     },
                   )
                   DropdownMenuItem(
-                    text = { Text("Generar APK de muestra (Java→DEX)") },
+                    text = { Text(stringResource(R.string.menu_create_sample_apk)) },
                     leadingIcon = { Icon(Icons.Default.BuildCircle, null) },
                     onClick = {
                       topMenuOpen = false
                       viewModel.createSampleApkInActivePane()
+                    },
+                  )
+                  DropdownMenuItem(
+                    text = { Text(stringResource(R.string.menu_language)) },
+                    leadingIcon = { Icon(Icons.Default.Language, null) },
+                    onClick = {
+                      topMenuOpen = false
+                      showLanguageDialog = true
                     },
                   )
                 }
@@ -282,14 +339,14 @@ fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
                 selected = state.destination == MainNavDestination.DUAL_FILES,
                 onClick = { viewModel.setDestination(MainNavDestination.DUAL_FILES) },
                 icon = { Icon(Icons.Default.FolderCopy, contentDescription = null) },
-                label = { Text("Gestor Dual") },
+                label = { Text(stringResource(R.string.nav_dual_manager)) },
                 modifier = Modifier.testTag("nav_dual_files"),
               )
               NavigationBarItem(
                 selected = state.destination == MainNavDestination.SIGNER_STUDIO,
                 onClick = { viewModel.setDestination(MainNavDestination.SIGNER_STUDIO) },
                 icon = { Icon(Icons.Default.VerifiedUser, contentDescription = null) },
-                label = { Text("Firmador APK") },
+                label = { Text(stringResource(R.string.nav_apk_signer)) },
                 modifier = Modifier.testTag("nav_signer_studio"),
               )
             }
@@ -300,7 +357,7 @@ fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
             ExtendedFloatingActionButton(
               onClick = { importFileLauncher.launch(arrayOf("*/*")) },
               icon = { Icon(Icons.Default.Add, contentDescription = null) },
-              text = { Text("Abrir APK / DEX") },
+              text = { Text(stringResource(R.string.fab_open_apk_dex)) },
               modifier = Modifier.testTag("fab_import_apk"),
             )
           }
@@ -355,7 +412,7 @@ fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
                       modifier = Modifier.testTag("tab_pane_0"),
                     ) {
                       Text(
-                        text = "Izq: ${state.leftPane.title}",
+                        text = stringResource(R.string.tab_left_prefix, state.leftPane.title),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                       )
@@ -367,7 +424,7 @@ fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
                       modifier = Modifier.testTag("tab_pane_1"),
                     ) {
                       Text(
-                        text = "Der: ${state.rightPane.title}",
+                        text = stringResource(R.string.tab_right_prefix, state.rightPane.title),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                       )
@@ -426,7 +483,7 @@ fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
                   horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                   CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                  Text("Procesando APK/DEX...", style = MaterialTheme.typography.titleSmall)
+                  Text(stringResource(R.string.busy_processing_apk_dex), style = MaterialTheme.typography.titleSmall)
                 }
               }
             }
@@ -457,6 +514,18 @@ fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
         pendingKeystoreUri = null
         viewModel.importKeystoreFromUri(uri, name, type, alias, sPass, kPass)
       },
+    )
+  }
+
+  // App Language Selector Dialog
+  if (showLanguageDialog) {
+    LanguagePickerDialog(
+      currentTag = state.appLanguageTag,
+      onSelect = { tag ->
+        showLanguageDialog = false
+        viewModel.setAppLanguage(tag)
+      },
+      onDismiss = { showLanguageDialog = false },
     )
   }
 }
@@ -507,7 +576,8 @@ private fun ImportKeystoreCredentialsDialog(
   onDismiss: () -> Unit,
   onConfirm: (String, String, String, String, String) -> Unit,
 ) {
-  var name by remember { mutableStateOf("Mi Keystore") }
+  val defaultName = stringResource(R.string.default_keystore_name)
+  var name by remember { mutableStateOf(defaultName) }
   var storeType by remember { mutableStateOf("PKCS12") }
   var alias by remember { mutableStateOf("") }
   var storePass by remember { mutableStateOf("") }
@@ -515,23 +585,78 @@ private fun ImportKeystoreCredentialsDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text("Credenciales del Keystore") },
+    title = { Text(stringResource(R.string.dialog_keystore_creds_title)) },
     text = {
       Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Nombre") }, singleLine = true)
-        OutlinedTextField(value = storeType, onValueChange = { storeType = it }, label = { Text("Tipo (PKCS12 o BKS)") }, singleLine = true)
-        OutlinedTextField(value = alias, onValueChange = { alias = it }, label = { Text("Alias (opcional)") }, singleLine = true)
-        OutlinedTextField(value = storePass, onValueChange = { storePass = it }, label = { Text("Contraseña Store") }, singleLine = true)
-        OutlinedTextField(value = keyPass, onValueChange = { keyPass = it }, label = { Text("Contraseña Clave") }, singleLine = true)
+        OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(stringResource(R.string.label_name)) }, singleLine = true)
+        OutlinedTextField(value = storeType, onValueChange = { storeType = it }, label = { Text(stringResource(R.string.label_keystore_type)) }, singleLine = true)
+        OutlinedTextField(value = alias, onValueChange = { alias = it }, label = { Text(stringResource(R.string.label_alias_optional)) }, singleLine = true)
+        OutlinedTextField(value = storePass, onValueChange = { storePass = it }, label = { Text(stringResource(R.string.label_store_password)) }, singleLine = true)
+        OutlinedTextField(value = keyPass, onValueChange = { keyPass = it }, label = { Text(stringResource(R.string.label_key_password)) }, singleLine = true)
       }
     },
     confirmButton = {
       TextButton(onClick = { onConfirm(name, storeType, alias, storePass, keyPass) }) {
-        Text("Importar")
+        Text(stringResource(R.string.action_import))
       }
     },
     dismissButton = {
-      TextButton(onClick = onDismiss) { Text("Cancelar") }
+      TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+    },
+  )
+}
+
+@Composable
+private fun LanguagePickerDialog(
+  currentTag: String,
+  onSelect: (String) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    icon = { Icon(Icons.Default.Language, contentDescription = null) },
+    title = { Text(stringResource(R.string.dialog_language_title)) },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+          text = stringResource(R.string.dialog_language_subtitle),
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(bottom = 6.dp),
+        )
+        LocaleManager.supportedLanguages.forEach { option ->
+          val label = if (option.tag.isEmpty()) {
+            stringResource(R.string.language_system_default)
+          } else {
+            option.nativeName
+          }
+          val selected = option.tag == currentTag
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable { onSelect(option.tag) }
+              .padding(vertical = 4.dp)
+              .testTag("language_option_${option.tag.ifEmpty { "auto" }}"),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            RadioButton(
+              selected = selected,
+              onClick = { onSelect(option.tag) },
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+              text = label,
+              style = MaterialTheme.typography.bodyLarge,
+              fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            )
+          }
+        }
+      }
+    },
+    confirmButton = {
+      TextButton(onClick = onDismiss) {
+        Text(stringResource(R.string.action_close))
+      }
     },
   )
 }

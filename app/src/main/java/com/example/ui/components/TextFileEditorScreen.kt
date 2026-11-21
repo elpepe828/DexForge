@@ -33,10 +33,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.ui.TextEditorModalState
 import com.example.ui.theme.JetBrainsMonoFamily
 import com.example.ui.theme.SyntaxColors
@@ -66,7 +68,7 @@ fun TextFileEditorScreen(
         verticalAlignment = Alignment.CenterVertically,
       ) {
         IconButton(onClick = onClose, modifier = Modifier.size(48.dp)) {
-          Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
+          Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.desc_back))
         }
         Column(modifier = Modifier.weight(1f)) {
           Text(
@@ -76,7 +78,11 @@ fun TextFileEditorScreen(
             overflow = TextOverflow.Ellipsis,
           )
           Text(
-            text = if (state.isReadOnly) "Solo lectura (XML binario decodificado)" else "${state.content.lines().size} líneas",
+            text = if (state.isReadOnly) {
+              stringResource(R.string.readonly_binary_xml)
+            } else {
+              stringResource(R.string.lines_count, state.content.lines().size)
+            },
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
           )
@@ -88,7 +94,7 @@ fun TextFileEditorScreen(
           ) {
             Icon(Icons.Default.Save, null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
-            Text("Guardar")
+            Text(stringResource(R.string.action_save))
           }
         }
       }

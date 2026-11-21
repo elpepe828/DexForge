@@ -44,10 +44,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.R
 import com.example.model.ApkMetadataSummary
 import com.example.ui.formatSize
 import com.example.ui.theme.JetBrainsMonoFamily
@@ -109,13 +111,13 @@ fun ApkInspectorDialog(
               fontWeight = FontWeight.Bold,
             )
             Text(
-              text = summary.packageName ?: "Paquete desconocido",
+              text = summary.packageName ?: stringResource(R.string.unknown_package),
               style = MaterialTheme.typography.bodyMedium,
               color = MaterialTheme.colorScheme.primary,
             )
           }
           IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Default.Close, contentDescription = "Cerrar inspector")
+            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.desc_close_inspector))
           }
         }
 
@@ -126,9 +128,9 @@ fun ApkInspectorDialog(
             .horizontalScroll(rememberScrollState()),
           horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          InfoChip("Tamaño: ${formatSize(summary.fileSizeBytes)}")
+          InfoChip(stringResource(R.string.chip_size, formatSize(summary.fileSizeBytes)))
           summary.versionName?.let { InfoChip("v$it (${summary.versionCode ?: "?"})") }
-          InfoChip("${summary.dexFiles.size} DEX • ${summary.entryCount} archivos")
+          InfoChip(stringResource(R.string.chip_dex_and_files, summary.dexFiles.size, summary.entryCount))
         }
 
         // Signature Status Card
@@ -156,9 +158,9 @@ fun ApkInspectorDialog(
                     if (sig.v2Verified) add("v2")
                     if (sig.v3Verified) add("v3")
                   }.joinToString("+")
-                  "Firma verificada ($schemes)"
+                  stringResource(R.string.sig_verified_schemes, schemes)
                 } else {
-                  "APK sin firma válida"
+                  stringResource(R.string.sig_invalid_or_missing)
                 },
                 style = MaterialTheme.typography.titleSmall,
               )
@@ -192,7 +194,7 @@ fun ApkInspectorDialog(
         ) {
           Icon(Icons.Default.Code, contentDescription = null)
           Spacer(Modifier.width(8.dp))
-          Text("Editor DEX → Java (${summary.dexFiles.joinToString(", ")})")
+          Text(stringResource(R.string.cta_editor_dex_java, summary.dexFiles.joinToString(", ")))
         }
 
         // Secondary Actions
@@ -209,7 +211,7 @@ fun ApkInspectorDialog(
           ) {
             Icon(Icons.Default.Archive, null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
-            Text("Explorar APK")
+            Text(stringResource(R.string.btn_explore_apk))
           }
           FilledTonalButton(
             onClick = onOpenSigner,
@@ -220,7 +222,7 @@ fun ApkInspectorDialog(
           ) {
             Icon(Icons.Default.VerifiedUser, null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
-            Text("Firmar APK")
+            Text(stringResource(R.string.action_sign_apk))
           }
         }
 
@@ -232,7 +234,7 @@ fun ApkInspectorDialog(
             onClick = { onExportApk(File(summary.apkFilePath)) },
             modifier = Modifier.weight(1f).height(48.dp),
           ) {
-            Text("Exportar...")
+            Text(stringResource(R.string.btn_export_dots))
           }
           OutlinedButton(
             onClick = { onShareApk(File(summary.apkFilePath)) },
@@ -240,7 +242,7 @@ fun ApkInspectorDialog(
           ) {
             Icon(Icons.Default.Share, null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
-            Text("Compartir")
+            Text(stringResource(R.string.action_share))
           }
         }
 
@@ -250,7 +252,7 @@ fun ApkInspectorDialog(
           onClick = { showManifest = !showManifest },
           modifier = Modifier.fillMaxWidth(),
         ) {
-          Text(if (showManifest) "Ocultar AndroidManifest.xml" else "Ver AndroidManifest.xml decodificado")
+          Text(stringResource(if (showManifest) R.string.btn_hide_manifest else R.string.btn_view_manifest))
         }
 
         if (showManifest) {

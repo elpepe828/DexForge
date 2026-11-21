@@ -67,9 +67,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.model.FileEntry
 import com.example.model.PaneSourceType
 import com.example.model.PaneState
@@ -155,7 +157,7 @@ fun FilePaneCard(
           ) {
             Icon(
               imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-              contentDescription = "Subir directorio",
+              contentDescription = stringResource(R.string.desc_navigate_up),
               tint = MaterialTheme.colorScheme.primary,
             )
           }
@@ -193,9 +195,9 @@ fun FilePaneCard(
           }
           Text(
             text = when (pane.sourceType) {
-              PaneSourceType.ARCHIVE_APK -> "Dentro de APK/ZIP: /${pane.archiveInternalDir}"
-              PaneSourceType.SAF_TREE -> "Almacenamiento del dispositivo (SAF)"
-              PaneSourceType.LOCAL_WORKSPACE -> "${filteredEntries.size} elementos"
+              PaneSourceType.ARCHIVE_APK -> stringResource(R.string.subtitle_inside_archive, pane.archiveInternalDir)
+              PaneSourceType.SAF_TREE -> stringResource(R.string.subtitle_saf_storage)
+              PaneSourceType.LOCAL_WORKSPACE -> stringResource(R.string.subtitle_items_count, filteredEntries.size)
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -213,7 +215,7 @@ fun FilePaneCard(
         ) {
           Icon(
             imageVector = if (showSearch) Icons.Default.Close else Icons.Default.Search,
-            contentDescription = "Buscar archivos",
+            contentDescription = stringResource(R.string.desc_search_files),
           )
         }
 
@@ -226,14 +228,14 @@ fun FilePaneCard(
             },
             modifier = Modifier.size(48.dp).testTag("pane_${pane.paneId}_menu_btn"),
           ) {
-            Icon(Icons.Default.MoreVert, contentDescription = "Opciones del panel")
+            Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.desc_pane_options))
           }
           DropdownMenu(
             expanded = paneMenuExpanded,
             onDismissRequest = { paneMenuExpanded = false },
           ) {
             DropdownMenuItem(
-              text = { Text("Importar APK / archivo...") },
+              text = { Text(stringResource(R.string.menu_import_apk_file)) },
               leadingIcon = { Icon(Icons.Default.FileOpen, null) },
               onClick = {
                 paneMenuExpanded = false
@@ -241,7 +243,7 @@ fun FilePaneCard(
               },
             )
             DropdownMenuItem(
-              text = { Text("Montar carpeta SAF...") },
+              text = { Text(stringResource(R.string.menu_mount_saf)) },
               leadingIcon = { Icon(Icons.Default.FolderOpen, null) },
               onClick = {
                 paneMenuExpanded = false
@@ -250,7 +252,7 @@ fun FilePaneCard(
             )
             if (pane.sourceType == PaneSourceType.LOCAL_WORKSPACE) {
               DropdownMenuItem(
-                text = { Text("Nueva carpeta") },
+                text = { Text(stringResource(R.string.menu_new_folder)) },
                 leadingIcon = { Icon(Icons.Default.CreateNewFolder, null) },
                 onClick = {
                   paneMenuExpanded = false
@@ -259,7 +261,7 @@ fun FilePaneCard(
                 },
               )
               DropdownMenuItem(
-                text = { Text("Nuevo archivo de texto/Java") },
+                text = { Text(stringResource(R.string.menu_new_text_java)) },
                 leadingIcon = { Icon(Icons.Default.NoteAdd, null) },
                 onClick = {
                   paneMenuExpanded = false
@@ -280,13 +282,18 @@ fun FilePaneCard(
           .padding(horizontal = 10.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
       ) {
-        listOf("APKs", "Proyectos", "Firmas", "Exportados").forEach { folder ->
+        listOf(
+          "APKs" to R.string.quick_folder_apks,
+          "Proyectos" to R.string.quick_folder_projects,
+          "Firmas" to R.string.quick_folder_keystores,
+          "Exportados" to R.string.quick_folder_exports,
+        ).forEach { (folderKey, labelRes) ->
           AssistChip(
             onClick = {
               onActivatePane()
-              onSwitchQuickFolder(folder)
+              onSwitchQuickFolder(folderKey)
             },
-            label = { Text(folder, style = MaterialTheme.typography.labelMedium) },
+            label = { Text(stringResource(labelRes), style = MaterialTheme.typography.labelMedium) },
             modifier = Modifier.height(32.dp),
           )
         }
@@ -296,13 +303,13 @@ fun FilePaneCard(
         OutlinedTextField(
           value = pane.searchQuery,
           onValueChange = onSearchChange,
-          placeholder = { Text("Filtrar archivos...") },
+          placeholder = { Text(stringResource(R.string.hint_filter_files)) },
           singleLine = true,
           leadingIcon = { Icon(Icons.Default.Search, null) },
           trailingIcon = {
             if (pane.searchQuery.isNotEmpty()) {
               IconButton(onClick = { onSearchChange("") }) {
-                Icon(Icons.Default.Close, "Limpiar filtro")
+                Icon(Icons.Default.Close, stringResource(R.string.desc_clear_filter))
               }
             }
           },
@@ -327,7 +334,7 @@ fun FilePaneCard(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
           ) {
             Text(
-              text = "${pane.selectedPaths.size} sel.",
+              text = stringResource(R.string.selected_count, pane.selectedPaths.size),
               style = MaterialTheme.typography.labelLarge,
               color = MaterialTheme.colorScheme.primary,
               modifier = Modifier.padding(horizontal = 6.dp),
@@ -335,18 +342,24 @@ fun FilePaneCard(
             TextButton(onClick = onCopyToOther, modifier = Modifier.testTag("pane_${pane.paneId}_copy_btn")) {
               Icon(Icons.Default.ContentCopy, null, modifier = Modifier.size(16.dp))
               Spacer(Modifier.width(4.dp))
-              Text(if (pane.sourceType == PaneSourceType.ARCHIVE_APK) "Extraer → $otherPaneTitle" else "Copiar → $otherPaneTitle")
+              Text(
+                if (pane.sourceType == PaneSourceType.ARCHIVE_APK) {
+                  stringResource(R.string.action_extract_to, otherPaneTitle)
+                } else {
+                  stringResource(R.string.action_copy_to, otherPaneTitle)
+                }
+              )
             }
             if (pane.sourceType == PaneSourceType.LOCAL_WORKSPACE) {
               TextButton(onClick = onMoveToOther) {
                 Icon(Icons.AutoMirrored.Filled.DriveFileMove, null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("Mover")
+                Text(stringResource(R.string.action_move))
               }
               TextButton(onClick = onZipSelected) {
                 Icon(Icons.Default.Archive, null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("ZIP")
+                Text(stringResource(R.string.action_zip))
               }
               if (pane.selectedPaths.size == 1) {
                 val targetEntry = pane.entries.firstOrNull { it.path == pane.selectedPaths.first() }
@@ -354,7 +367,7 @@ fun FilePaneCard(
                   TextButton(onClick = { renameTarget = targetEntry }) {
                     Icon(Icons.Default.DriveFileRenameOutline, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Renombrar")
+                    Text(stringResource(R.string.action_rename))
                   }
                 }
               }
@@ -362,10 +375,10 @@ fun FilePaneCard(
             TextButton(onClick = onDeleteSelected) {
               Icon(Icons.Default.Delete, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
               Spacer(Modifier.width(4.dp))
-              Text("Eliminar", color = MaterialTheme.colorScheme.error)
+              Text(stringResource(R.string.action_delete), color = MaterialTheme.colorScheme.error)
             }
             IconButton(onClick = onClearSelection, modifier = Modifier.size(40.dp)) {
-              Icon(Icons.Default.Close, "Deseleccionar")
+              Icon(Icons.Default.Close, stringResource(R.string.desc_deselect))
             }
           }
         }
@@ -393,12 +406,12 @@ fun FilePaneCard(
               modifier = Modifier.size(44.dp),
             )
             Text(
-              text = "Carpeta vacía",
+              text = stringResource(R.string.empty_folder_title),
               style = MaterialTheme.typography.titleSmall,
               color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-              text = "Importa un APK con '+' o cambia de carpeta arriba.",
+              text = stringResource(R.string.empty_folder_hint),
               style = MaterialTheme.typography.bodySmall,
               color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
             )
@@ -547,7 +560,7 @@ private fun FileEntryRow(
     IconButton(onClick = onToggleSelect, modifier = Modifier.size(48.dp)) {
       Icon(
         imageVector = if (isSelected) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
-        contentDescription = "Seleccionar ${entry.name}",
+        contentDescription = stringResource(R.string.desc_select_item, entry.name),
         tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
         modifier = Modifier.size(20.dp),
       )
@@ -587,7 +600,7 @@ private fun FileEntryRow(
           )
         } else {
           Text(
-            text = "Carpeta",
+            text = stringResource(R.string.label_folder),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
           )
@@ -605,14 +618,14 @@ private fun FileEntryRow(
         IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(48.dp)) {
           Icon(
             Icons.Default.MoreVert,
-            contentDescription = "Acciones de ${entry.name}",
+            contentDescription = stringResource(R.string.desc_item_actions, entry.name),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
           )
         }
         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
           if (entry.isApk) {
             DropdownMenuItem(
-              text = { Text("Editor DEX → Java") },
+              text = { Text(stringResource(R.string.action_editor_dex_java)) },
               leadingIcon = { Icon(Icons.Default.Code, null) },
               onClick = {
                 menuExpanded = false
@@ -620,7 +633,7 @@ private fun FileEntryRow(
               },
             )
             DropdownMenuItem(
-              text = { Text("Explorar contenido APK") },
+              text = { Text(stringResource(R.string.action_explore_apk_content)) },
               leadingIcon = { Icon(Icons.Default.Archive, null) },
               onClick = {
                 menuExpanded = false
@@ -628,7 +641,7 @@ private fun FileEntryRow(
               },
             )
             DropdownMenuItem(
-              text = { Text("Firmar APK") },
+              text = { Text(stringResource(R.string.action_sign_apk)) },
               leadingIcon = { Icon(Icons.Default.VerifiedUser, null) },
               onClick = {
                 menuExpanded = false
@@ -637,7 +650,7 @@ private fun FileEntryRow(
             )
           }
           DropdownMenuItem(
-            text = { Text("Guardar en dispositivo...") },
+            text = { Text(stringResource(R.string.action_save_to_device)) },
             leadingIcon = { Icon(Icons.AutoMirrored.Filled.CompareArrows, null) },
             onClick = {
               menuExpanded = false
@@ -645,7 +658,7 @@ private fun FileEntryRow(
             },
           )
           DropdownMenuItem(
-            text = { Text("Compartir") },
+            text = { Text(stringResource(R.string.action_share)) },
             leadingIcon = { Icon(Icons.Default.Share, null) },
             onClick = {
               menuExpanded = false
@@ -664,24 +677,25 @@ private fun CreateItemDialog(
   onDismiss: () -> Unit,
   onConfirm: (String) -> Unit,
 ) {
-  var name by remember { mutableStateOf(if (isDirectory) "nueva_carpeta" else "ClaseNueva.java") }
+  val defaultName = stringResource(if (isDirectory) R.string.default_new_folder_name else R.string.default_new_file_name)
+  var name by remember { mutableStateOf(defaultName) }
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text(if (isDirectory) "Nueva carpeta" else "Nuevo archivo") },
+    title = { Text(stringResource(if (isDirectory) R.string.dialog_new_folder_title else R.string.dialog_new_file_title)) },
     text = {
       OutlinedTextField(
         value = name,
         onValueChange = { name = it },
-        label = { Text("Nombre") },
+        label = { Text(stringResource(R.string.label_name)) },
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
       )
     },
     confirmButton = {
-      TextButton(onClick = { onConfirm(name) }) { Text("Crear") }
+      TextButton(onClick = { onConfirm(name) }) { Text(stringResource(R.string.action_create)) }
     },
     dismissButton = {
-      TextButton(onClick = onDismiss) { Text("Cancelar") }
+      TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
     },
   )
 }
@@ -695,21 +709,21 @@ private fun RenameItemDialog(
   var name by remember { mutableStateOf(currentName) }
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text("Renombrar") },
+    title = { Text(stringResource(R.string.dialog_rename_title)) },
     text = {
       OutlinedTextField(
         value = name,
         onValueChange = { name = it },
-        label = { Text("Nuevo nombre") },
+        label = { Text(stringResource(R.string.label_new_name)) },
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
       )
     },
     confirmButton = {
-      TextButton(onClick = { onConfirm(name) }) { Text("Guardar") }
+      TextButton(onClick = { onConfirm(name) }) { Text(stringResource(R.string.action_save)) }
     },
     dismissButton = {
-      TextButton(onClick = onDismiss) { Text("Cancelar") }
+      TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
     },
   )
 }

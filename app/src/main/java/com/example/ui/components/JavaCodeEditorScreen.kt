@@ -68,6 +68,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -79,6 +80,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.model.CompilePatchResult
 import com.example.model.DecompilerMode
 import com.example.model.DexClassInfo
@@ -165,7 +167,7 @@ fun JavaCodeEditorScreen(
                   onClick = requestReturnToExplorer,
                   modifier = Modifier.size(48.dp).testTag("dex_editor_back_btn"),
                 ) {
-                  Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver a carpetas de clases")
+                  Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.desc_back_to_folders))
                 }
 
                 if (!isWide) {
@@ -173,7 +175,7 @@ fun JavaCodeEditorScreen(
                     onClick = requestReturnToExplorer,
                     modifier = Modifier.size(48.dp).testTag("dex_editor_classes_btn"),
                   ) {
-                    Icon(Icons.Default.FolderOpen, contentDescription = "Explorador de clases")
+                    Icon(Icons.Default.FolderOpen, contentDescription = stringResource(R.string.desc_class_explorer))
                   }
                 }
 
@@ -188,7 +190,9 @@ fun JavaCodeEditorScreen(
                     overflow = TextOverflow.Ellipsis,
                   )
                   Text(
-                    text = state.selectedClass?.packageName?.ifEmpty { "(paquete raíz)" } ?: "${state.classes.size} clases",
+                    text = state.selectedClass?.let { cls ->
+                      cls.packageName.ifEmpty { stringResource(R.string.root_package_label) }
+                    } ?: stringResource(R.string.classes_count_label, state.classes.size),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -201,20 +205,20 @@ fun JavaCodeEditorScreen(
                   enabled = state.undoStack.isNotEmpty(),
                   modifier = Modifier.size(48.dp),
                 ) {
-                  Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Deshacer")
+                  Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = stringResource(R.string.desc_undo))
                 }
                 IconButton(
                   onClick = onRedo,
                   enabled = state.redoStack.isNotEmpty(),
                   modifier = Modifier.size(48.dp),
                 ) {
-                  Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Rehacer")
+                  Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = stringResource(R.string.desc_redo))
                 }
                 IconButton(
                   onClick = { showFindReplace = !showFindReplace },
                   modifier = Modifier.size(48.dp),
                 ) {
-                  Icon(Icons.Default.FindReplace, contentDescription = "Buscar y reemplazar")
+                  Icon(Icons.Default.FindReplace, contentDescription = stringResource(R.string.desc_find_replace))
                 }
               }
 
@@ -250,14 +254,14 @@ fun JavaCodeEditorScreen(
                 FilterChip(
                   selected = state.decompilerMode == DecompilerMode.JAVA,
                   onClick = { onModeChange(DecompilerMode.JAVA) },
-                  label = { Text("Java") },
+                  label = { Text(stringResource(R.string.tab_java)) },
                   leadingIcon = { Icon(Icons.Default.Code, null, modifier = Modifier.size(16.dp)) },
                   modifier = Modifier.height(36.dp).testTag("mode_java_chip"),
                 )
                 FilterChip(
                   selected = state.decompilerMode == DecompilerMode.SMALI_INFO,
                   onClick = { onModeChange(DecompilerMode.SMALI_INFO) },
-                  label = { Text("Bytecode") },
+                  label = { Text(stringResource(R.string.tab_bytecode)) },
                   modifier = Modifier.height(36.dp).testTag("mode_bytecode_chip"),
                 )
 
@@ -277,7 +281,7 @@ fun JavaCodeEditorScreen(
                     Icon(Icons.Default.Build, null, modifier = Modifier.size(16.dp))
                   }
                   Spacer(Modifier.width(6.dp))
-                  Text("Compilar → DEX", style = MaterialTheme.typography.labelLarge)
+                  Text(stringResource(R.string.btn_compile_to_dex), style = MaterialTheme.typography.labelLarge)
                 }
 
                 Button(
@@ -297,7 +301,7 @@ fun JavaCodeEditorScreen(
                   )
                   Spacer(Modifier.width(6.dp))
                   Text(
-                    if (state.targetApkPath != null) "Confirmar y Firmar APK" else "Guardar DEX",
+                    stringResource(if (state.targetApkPath != null) R.string.btn_confirm_and_sign_apk else R.string.btn_save_dex),
                     style = MaterialTheme.typography.labelLarge,
                   )
                 }
@@ -315,14 +319,14 @@ fun JavaCodeEditorScreen(
                   OutlinedTextField(
                     value = findText,
                     onValueChange = { findText = it },
-                    placeholder = { Text("Buscar") },
+                    placeholder = { Text(stringResource(R.string.hint_find)) },
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                   )
                   OutlinedTextField(
                     value = replaceText,
                     onValueChange = { replaceText = it },
-                    placeholder = { Text("Reemplazar") },
+                    placeholder = { Text(stringResource(R.string.hint_replace)) },
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                   )
@@ -333,7 +337,7 @@ fun JavaCodeEditorScreen(
                       }
                     },
                   ) {
-                    Text("Todo")
+                    Text(stringResource(R.string.btn_replace_all))
                   }
                 }
               }
@@ -374,7 +378,7 @@ fun JavaCodeEditorScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                   ) {
                     CircularProgressIndicator()
-                    Text("Descompilando índice DEX con Jadx...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.decompiling_dex_index), color = MaterialTheme.colorScheme.onSurfaceVariant)
                   }
                 }
                 state.isDecompiling -> {
@@ -384,7 +388,7 @@ fun JavaCodeEditorScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                   ) {
                     CircularProgressIndicator()
-                    Text("Generando código Java editable...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.generating_editable_java), color = MaterialTheme.colorScheme.onSurfaceVariant)
                   }
                 }
                 state.selectedClass == null -> {
@@ -394,9 +398,9 @@ fun JavaCodeEditorScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                   ) {
                     Icon(Icons.Default.Code, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(48.dp))
-                    Text("Selecciona una clase para editar en Java", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.select_class_prompt), style = MaterialTheme.typography.titleMedium)
                     Button(onClick = onOpenClassBrowser) {
-                      Text("Abrir carpetas de clases")
+                      Text(stringResource(R.string.btn_open_class_folders))
                     }
                   }
                 }
@@ -444,22 +448,22 @@ fun JavaCodeEditorScreen(
               Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.tertiary)
               Column(modifier = Modifier.weight(1f)) {
                 Text(
-                  text = "Listo: ${savedFile.name}",
+                  text = stringResource(R.string.banner_ready_title, savedFile.name),
                   style = MaterialTheme.typography.titleSmall,
                 )
                 Text(
-                  text = "Cambios compilados en DEX y APK firmado",
+                  text = stringResource(R.string.banner_ready_subtitle),
                   style = MaterialTheme.typography.labelSmall,
                 )
               }
               TextButton(onClick = { onExportSavedFile(savedFile) }) {
-                Text("Exportar")
+                Text(stringResource(R.string.btn_export))
               }
               TextButton(onClick = { onShareSavedFile(savedFile) }) {
-                Text("Compartir")
+                Text(stringResource(R.string.action_share))
               }
               IconButton(onClick = onDismissSavedBanner, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Default.Close, contentDescription = "Cerrar aviso")
+                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.desc_close_banner))
               }
             }
           }
@@ -482,9 +486,10 @@ fun JavaCodeEditorScreen(
       if (showUnsavedReturnDialog) {
         AlertDialog(
           onDismissRequest = { showUnsavedReturnDialog = false },
-          title = { Text("Cambios Java sin compilar") },
+          title = { Text(stringResource(R.string.unsaved_java_title)) },
           text = {
-            Text("Editaste ${state.selectedClass?.simpleName ?: "esta clase"}. ¿Quieres compilar los cambios al DEX antes de volver al selector de clases?")
+            val targetName = state.selectedClass?.simpleName ?: stringResource(R.string.this_class_fallback)
+            Text(stringResource(R.string.unsaved_java_body, targetName))
           },
           confirmButton = {
             Button(
@@ -493,7 +498,7 @@ fun JavaCodeEditorScreen(
                 onCompileAndReturnToBrowser()
               }
             ) {
-              Text("Compilar y volver")
+              Text(stringResource(R.string.btn_compile_and_return))
             }
           },
           dismissButton = {
@@ -504,10 +509,10 @@ fun JavaCodeEditorScreen(
                   onDiscardAndReturnToBrowser()
                 }
               ) {
-                Text("Descartar")
+                Text(stringResource(R.string.btn_discard))
               }
               TextButton(onClick = { showUnsavedReturnDialog = false }) {
-                Text("Cancelar")
+                Text(stringResource(R.string.action_cancel))
               }
             }
           },
@@ -613,10 +618,14 @@ private fun CompileStatusBanner(
         )
         Text(
           text = if (result.success) {
-            "Compilado OK (${result.compiledClassesCount} clase(s) en DEX)"
+            stringResource(R.string.compiled_ok_banner, result.compiledClassesCount)
           } else {
             val first = result.diagnostics.firstOrNull()
-            if (first != null) "Línea ${first.line}: ${first.message}" else "Error de compilación"
+            if (first != null) {
+              stringResource(R.string.compile_error_line, first.line, first.message)
+            } else {
+              stringResource(R.string.compile_error_generic)
+            }
           },
           style = MaterialTheme.typography.bodyMedium,
           fontWeight = FontWeight.Medium,
@@ -625,7 +634,7 @@ private fun CompileStatusBanner(
           overflow = TextOverflow.Ellipsis,
         )
         Text(
-          text = if (expanded) "Ocultar log" else "Ver log",
+          text = stringResource(if (expanded) R.string.btn_hide_log else R.string.btn_view_log),
           style = MaterialTheme.typography.labelLarge,
         )
       }
@@ -646,7 +655,7 @@ private fun CompileStatusBanner(
           }
           result.diagnostics.forEach { diag ->
             Text(
-              text = "[Línea ${diag.line}] ${diag.message}",
+              text = stringResource(R.string.log_line_prefix, diag.line, diag.message),
               fontFamily = JetBrainsMonoFamily,
               style = MaterialTheme.typography.labelSmall,
               fontWeight = FontWeight.Bold,
@@ -724,21 +733,17 @@ private fun ConfirmApplyAndSignDialog(
     },
     title = {
       Text(
-        text = if (isApk) "Confirmar cambios y firmar APK" else "Confirmar y guardar DEX",
+        text = stringResource(if (isApk) R.string.confirm_dialog_title_apk else R.string.confirm_dialog_title_dex),
       )
     },
     text = {
       Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
-          text = buildString {
-            if (hasUncompiledEdits) {
-              append("Se compilará automáticamente tu código Java modificado a bytecode .dex")
-              if (isApk) append(", se aplicará dentro de \"$apkName\" y se firmará listo para usar.")
-              else append(" y se guardará el archivo.")
-            } else {
-              if (isApk) append("Se empaquetará el DEX parcheado en \"$apkName\" y se aplicará la firma digital.")
-              else append("Se guardará el archivo DEX modificado.")
-            }
+          text = when {
+            hasUncompiledEdits && isApk -> stringResource(R.string.confirm_body_uncompiled_apk, apkName)
+            hasUncompiledEdits -> stringResource(R.string.confirm_body_uncompiled_dex)
+            isApk -> stringResource(R.string.confirm_body_compiled_apk, apkName)
+            else -> stringResource(R.string.confirm_body_compiled_dex)
           },
           style = MaterialTheme.typography.bodyMedium,
         )
@@ -746,7 +751,7 @@ private fun ConfirmApplyAndSignDialog(
         if (isApk) {
           HorizontalDivider()
           Text(
-            text = "Destino de guardado",
+            text = stringResource(R.string.label_save_destination),
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
           )
@@ -763,9 +768,9 @@ private fun ConfirmApplyAndSignDialog(
               onClick = { overwriteOriginal = true },
             )
             Column(modifier = Modifier.weight(1f)) {
-              Text("Guardar en el APK original", style = MaterialTheme.typography.bodyMedium)
+              Text(stringResource(R.string.option_overwrite_original), style = MaterialTheme.typography.bodyMedium)
               Text(
-                "Actualiza directamente $apkName",
+                stringResource(R.string.option_overwrite_desc, apkName),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
@@ -785,7 +790,7 @@ private fun ConfirmApplyAndSignDialog(
                 onCheckedChange = { createBackup = it },
               )
               Text(
-                "Crear copia de respaldo (.bak)",
+                stringResource(R.string.option_create_backup),
                 style = MaterialTheme.typography.bodySmall,
               )
             }
@@ -803,9 +808,9 @@ private fun ConfirmApplyAndSignDialog(
               onClick = { overwriteOriginal = false },
             )
             Column(modifier = Modifier.weight(1f)) {
-              Text("Guardar copia en Exportados/", style = MaterialTheme.typography.bodyMedium)
+              Text(stringResource(R.string.option_save_export_copy), style = MaterialTheme.typography.bodyMedium)
               Text(
-                "Conserva el original intacto y crea un APK nuevo",
+                stringResource(R.string.option_save_export_desc),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
@@ -826,9 +831,9 @@ private fun ConfirmApplyAndSignDialog(
               onCheckedChange = { autoSign = it },
             )
             Column(modifier = Modifier.weight(1f)) {
-              Text("Firmar automáticamente (v1 / v2 / v3)", style = MaterialTheme.typography.bodyMedium)
+              Text(stringResource(R.string.option_auto_sign), style = MaterialTheme.typography.bodyMedium)
               Text(
-                "Necesario para poder instalar el APK en Android",
+                stringResource(R.string.option_auto_sign_desc),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
@@ -843,17 +848,19 @@ private fun ConfirmApplyAndSignDialog(
         modifier = Modifier.testTag("confirm_apply_and_sign_btn"),
       ) {
         Text(
-          when {
-            !isApk -> "Guardar DEX"
-            autoSign -> "Aplicar y Firmar"
-            else -> "Aplicar sin firmar"
-          }
+          stringResource(
+            when {
+              !isApk -> R.string.btn_save_dex
+              autoSign -> R.string.btn_apply_and_sign
+              else -> R.string.btn_apply_unsigned
+            }
+          )
         )
       }
     },
     dismissButton = {
       TextButton(onClick = onDismiss) {
-        Text("Cancelar")
+        Text(stringResource(R.string.action_cancel))
       }
     },
   )

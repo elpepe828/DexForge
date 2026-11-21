@@ -3,8 +3,10 @@ package com.example.ui
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
+import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.R
 import com.example.data.WorkspaceRepository
 import com.example.engine.ApkArchiveEngine
 import com.example.engine.AxmlDecoder
@@ -20,6 +22,7 @@ import com.example.model.KeystoreProfile
 import com.example.model.PaneSourceType
 import com.example.model.PaneState
 import com.example.model.SignatureReport
+import com.example.util.LocaleManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -66,12 +69,15 @@ data class MainUiState(
   val statusMessage: String? = null,
   val isBusy: Boolean = false,
   val pendingExportFile: File? = null,
+  val appLanguageTag: String = "",
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
   private val repo = WorkspaceRepository(application)
-  private val _uiState = MutableStateFlow(MainUiState())
+  private val _uiState = MutableStateFlow(
+    MainUiState(appLanguageTag = LocaleManager.getSavedLanguageTag(application))
+  )
   val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
   private var activeDecompilerSession: JavaDecompilerSession? = null
@@ -87,13 +93,67 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         it.copy(
           keystoreProfiles = profiles,
           selectedKeystoreId = profiles.firstOrNull()?.id,
-          leftPane = it.leftPane.copy(currentPath = repo.apksDir.absolutePath),
-          rightPane = it.rightPane.copy(currentPath = repo.exportsDir.absolutePath),
+          leftPane = it.leftPane.copy(
+            currentPath = repo.apksDir.absolutePath,
+            title = str(R.string.quick_folder_apks),
+          ),
+          rightPane = it.rightPane.copy(
+            currentPath = repo.exportsDir.absolutePath,
+            title = str(R.string.quick_folder_exports),
+          ),
         )
       }
       refreshPane(0)
       refreshPane(1)
     }
+  }
+
+  private fun str(@StringRes resId: Int, vararg formatArgs: Any): String {
+    val localized = LocaleManager.createLocalizedContext(getApplication(), _uiState.value.appLanguageTag)
+    return if (formatArgs.isEmpty()) {
+      localized.getString(resId)
+    } else {
+      localized.getString(resId, *formatArgs)
+    }
+  }
+
+  private fun localizedQuickFolderTitle(folderKey: String): String {
+    return when (folderKey) {
+      "APKs" -> str(R.string.quick_folder_apks)
+      "Proyectos" -> str(R.string.quick_folder_projects)
+      "Firmas" -> str(R.string.quick_folder_keystores)
+      "Exportados" -> str(R.string.quick_folder_exports)
+      else -> "Workspace"
+    }
+  }
+
+  private fun relocalizePaneTitleIfKnown(pane: PaneState): PaneState {
+    if (pane.sourceType == PaneSourceType.SAF_TREE && pane.safCurrentUri == pane.safRootUri) {
+      return pane.copy(title = str(R.string.label_saf_folder))
+    }
+    if (pane.sourceType != PaneSourceType.LOCAL_WORKSPACE) return pane
+    val path = pane.currentPath
+    val title = when (path) {
+      repo.apksDir.absolutePath -> str(R.string.quick_folder_apks)
+      repo.projectsDir.absolutePath -> str(R.string.quick_folder_projects)
+      repo.keystoresDir.absolutePath -> str(R.string.quick_folder_keystores)
+      repo.exportsDir.absolutePath -> str(R.string.quick_folder_exports)
+      repo.workspaceRoot.absolutePath -> "Workspace"
+      else -> pane.title
+    }
+    return pane.copy(title = title)
+  }
+
+  fun setAppLanguage(tag: String) {
+    LocaleManager.saveLanguageTag(getApplication(), tag)
+    _uiState.update { state ->
+      state.copy(
+        appLanguageTag = tag,
+        leftPane = relocalizePaneTitleIfKnown(state.leftPane),
+        rightPane = relocalizePaneTitleIfKnown(state.rightPane),
+      )
+    }
+    postMessage(str(R.string.msg_language_updated))
   }
 
   fun setDestination(dest: MainNavDestination) {
@@ -180,7 +240,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else if (entry.isEditableText || entry.extension == "xml") {
           openArchiveTextEntry(archPath, entry.path)
         } else {
-          postMessage("Archivo interno: ${entry.name} (${formatSize(entry.sizeBytes)}). Extrae al otro panel para usar.")
+          postMessage(str(R.string.msg_internal_archive_file, entry.name, formatSize(entry.sizeBytes)))
         }
       }
       entry.isSafEntry && entry.isDirectory -> {
@@ -217,7 +277,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         openLocalTextFile(File(entry.path))
       }
       else -> {
-        postMessage("Archivo ${entry.name} (${formatSize(entry.sizeBytes)})")
+        postMessage(str(R.string.msg_file_info, entry.name, formatSize(entry.sizeBytes)))
       }
     }
   }
@@ -264,7 +324,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
       }
       PaneSourceType.SAF_TREE -> {
         updatePane(paneId) {
-          it.copy(safCurrentUri = it.safRootUri, title = "Carpeta SAF")
+          it.copy(safCurrentUri = it.safRootUri, title = str(R.string.label_saf_folder))
         }
         refreshPane(paneId)
       }
@@ -287,7 +347,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         archiveInternalDir = "",
         safRootUri = null,
         safCurrentUri = null,
-        title = folderName,
+        title = localizedQuickFolderTitle(folderName),
       )
     }
     refreshPane(paneId)
@@ -300,7 +360,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         safRootUri = treeUri,
         safCurrentUri = treeUri,
         archiveFilePath = null,
-        title = "Carpeta SAF",
+        title = str(R.string.label_saf_folder),
       )
     }
     refreshPane(paneId)
@@ -352,10 +412,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (openIfApk && imported.extension.equals("apk", ignoreCase = true)) {
           inspectApk(imported)
         }
-        postMessage("Importado: ${imported.name}")
+        postMessage(str(R.string.msg_imported, imported.name))
       }.onFailure { e ->
         updatePane(paneId) { it.copy(isLoading = false) }
-        postMessage("Error al importar: ${e.message}")
+        postMessage(str(R.string.msg_import_error, e.message.orEmpty()))
       }
     }
   }
@@ -365,14 +425,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
       _uiState.update { it.copy(isBusy = true) }
       runCatching {
         val profile = currentSelectedKeystore()
-          ?: throw IllegalStateException("No hay keystore disponible")
+          ?: throw IllegalStateException(str(R.string.msg_no_keystore_available))
         val targetDir = repo.apksDir
         val outFile = File(targetDir, "Sandbox_${System.currentTimeMillis() % 10000}.apk")
         JavaToDexCompiler.createSampleApk(repo.cacheDir, outFile, profile)
         refreshBothPanes()
-        postMessage("APK real compilado y firmado: ${outFile.name}")
+        postMessage(str(R.string.msg_apk_saved_signed, outFile.name))
       }.onFailure { e ->
-        postMessage("Error creando APK: ${e.message}")
+        postMessage(str(R.string.msg_error_creating_apk, e.message.orEmpty()))
       }
       _uiState.update { it.copy(isBusy = false) }
     }
@@ -384,7 +444,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     viewModelScope.launch(Dispatchers.IO) {
       val pane = if (paneId == 0) _uiState.value.leftPane else _uiState.value.rightPane
       if (pane.sourceType != PaneSourceType.LOCAL_WORKSPACE) {
-        postMessage("Cambia el panel a Workspace Local para crear archivos.")
+        postMessage(str(R.string.msg_switch_to_local_to_create))
         return@launch
       }
       val target = File(pane.currentPath, cleanName)
@@ -395,7 +455,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         target.writeText("")
       }
       refreshPane(paneId)
-      postMessage("Creado: $cleanName")
+      postMessage(str(R.string.msg_created, cleanName))
     }
   }
 
@@ -409,9 +469,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val dst = File(src.parentFile, clean)
         if (src.renameTo(dst)) {
           refreshBothPanes()
-          postMessage("Renombrado a $clean")
+          postMessage(str(R.string.msg_renamed, clean))
         } else {
-          postMessage("No se pudo renombrar ${entry.name}")
+          postMessage(str(R.string.msg_rename_failed, entry.name))
         }
       }
     }
@@ -429,7 +489,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (f.deleteRecursively()) count++
           }
           refreshBothPanes()
-          postMessage("Eliminados $count elemento(s)")
+          postMessage(str(R.string.msg_deleted_count, count))
         }
         PaneSourceType.ARCHIVE_APK -> {
           val archPath = pane.archiveFilePath ?: return@launch
@@ -442,10 +502,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             stripSignatures = archFile.extension.equals("apk", true),
           )
           refreshPane(paneId)
-          postMessage("Eliminados del archivo (firma removida si es APK)")
+          postMessage(str(R.string.msg_deleted_from_archive))
         }
         PaneSourceType.SAF_TREE -> {
-          postMessage("Usa el gestor del sistema para borrar en carpetas SAF")
+          postMessage(str(R.string.msg_saf_delete_hint))
         }
       }
     }
@@ -456,7 +516,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
       val srcPane = if (sourcePaneId == 0) _uiState.value.leftPane else _uiState.value.rightPane
       val dstPane = if (sourcePaneId == 0) _uiState.value.rightPane else _uiState.value.leftPane
       if (srcPane.selectedPaths.isEmpty()) {
-        postMessage("Selecciona uno o más elementos primero")
+        postMessage(str(R.string.msg_select_items_first))
         return@launch
       }
 
@@ -469,7 +529,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
           count++
         }
         refreshBothPanes()
-        postMessage("${if (move) "Movidos" else "Copiados"} $count elemento(s) a ${dstPane.title}")
+        postMessage(
+          str(if (move) R.string.msg_moved_count else R.string.msg_copied_count, count, dstPane.title)
+        )
         return@launch
       }
 
@@ -488,7 +550,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
           }
         }
         refreshBothPanes()
-        postMessage("Extraídos $count archivo(s) a ${dstPane.title}")
+        postMessage(str(R.string.msg_extracted_count, count, dstPane.title))
         return@launch
       }
 
@@ -511,7 +573,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             stripSignatures = archFile.extension.equals("apk", true),
           )
           refreshBothPanes()
-          postMessage("Añadidos ${replacements.size} archivo(s) dentro de ${archFile.name}")
+          postMessage(str(R.string.msg_added_to_archive, replacements.size, archFile.name))
         }
       }
     }
@@ -525,7 +587,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
       val dest = File(pane.currentPath, "${files.first().nameWithoutExtension}.zip")
       repo.zipFiles(files, dest)
       refreshPane(paneId)
-      postMessage("Comprimido en ${dest.name}")
+      postMessage(str(R.string.msg_zipped_to, dest.name))
     }
   }
 
@@ -539,7 +601,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(apkInspector = summary, isBusy = false) }
       }.onFailure { e ->
         _uiState.update { it.copy(isBusy = false) }
-        postMessage("No se pudo abrir el APK: ${e.message}")
+        postMessage(str(R.string.msg_apk_open_error, e.message.orEmpty()))
       }
     }
   }
@@ -573,7 +635,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
   fun openLocalTextFile(file: File) {
     viewModelScope.launch(Dispatchers.IO) {
       if (file.length() > 1_500_000L) {
-        postMessage("Archivo demasiado grande para editor de texto (>1.5 MB)")
+        postMessage(str(R.string.msg_file_too_large_text))
         return@launch
       }
       val text = file.readText(StandardCharsets.UTF_8)
@@ -604,7 +666,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
       _uiState.update {
         it.copy(
           textEditor = TextEditorModalState(
-            title = "$entryPath" + if (isBinaryXml) " (AXML Decodificado)" else "",
+            title = if (isBinaryXml) str(R.string.label_axml_decoded, entryPath) else entryPath,
             content = decoded,
             originalContent = decoded,
             filePath = null,
@@ -634,7 +696,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (editor.filePath != null) {
           File(editor.filePath).writeText(editor.content, StandardCharsets.UTF_8)
           refreshBothPanes()
-          postMessage("Guardado ${editor.title}")
+          postMessage(str(R.string.msg_saved_file, editor.title))
         } else if (editor.archivePath != null && editor.archiveEntryPath != null) {
           val arch = File(editor.archivePath)
           ApkArchiveEngine.replaceOrAddEntries(
@@ -644,11 +706,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             stripSignatures = arch.extension.equals("apk", true),
           )
           refreshBothPanes()
-          postMessage("Guardado en ${arch.name} (firma previa eliminada, vuelve a firmar)")
+          postMessage(str(R.string.msg_saved_in_archive_resign, arch.name))
         }
         _uiState.update { it.copy(textEditor = null) }
       }.onFailure { e ->
-        postMessage("Error al guardar: ${e.message}")
+        postMessage(str(R.string.msg_save_error, e.message.orEmpty()))
       }
     }
   }
@@ -665,7 +727,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
       val apkFile = File(apkPath)
       val dexFiles = ApkArchiveEngine.listDexFilesFast(apkFile)
       if (dexFiles.isEmpty()) {
-        postMessage("El APK no contiene archivos classes*.dex")
+        postMessage(str(R.string.msg_apk_no_dex))
         return@launch
       }
 
@@ -761,7 +823,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
       _uiState.update { state ->
         state.copy(dexEditor = state.dexEditor?.copy(isLoadingIndex = false))
       }
-      postMessage("Error abriendo DEX con Jadx: ${e.message}")
+      postMessage(str(R.string.msg_dex_load_error, e.message.orEmpty()))
     }
   }
 
@@ -990,7 +1052,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
               )
             )
           }
-          postMessage("Java compilado y parcheado en ${ed.activeDexEntry} con éxito")
+          postMessage(str(R.string.msg_java_compiled_patched, ed.activeDexEntry))
         } else {
           _uiState.update { state ->
             state.copy(
@@ -1013,10 +1075,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     line = 1,
                     column = 1,
                     severity = com.example.model.DiagnosticSeverity.ERROR,
-                    message = "${t::class.java.simpleName}: ${t.message ?: "Error inesperado"}",
+                    message = "${t::class.java.simpleName}: ${t.message ?: str(R.string.msg_unexpected_error)}",
                   )
                 ),
-                logs = listOf("Error fatal: ${t::class.java.name}: ${t.message}"),
+                logs = listOf("${t::class.java.name}: ${t.message}"),
               ),
             )
           )
@@ -1065,7 +1127,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
               )
             }
-            postMessage("Error de compilación Java: revisa los detalles abajo")
+            postMessage(str(R.string.msg_java_compile_error_details))
             return@launch
           }
           modifiedDexEntries += ed.activeDexEntry
@@ -1108,7 +1170,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
           if (autoSign) {
             val profile = currentSelectedKeystore()
-              ?: throw IllegalStateException("Selecciona un Keystore en Firmas")
+              ?: throw IllegalStateException(str(R.string.msg_select_keystore_in_signer))
             ApkArchiveEngine.signApk(
               inputApk = tempPatched,
               outputApk = outApk,
@@ -1144,10 +1206,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
           }
           postMessage(
             when {
-              overwriteOriginal && autoSign -> "APK original actualizado y firmado: ${outApk.name}"
-              overwriteOriginal -> "APK original actualizado (sin firma): ${outApk.name}"
-              autoSign -> "APK guardado y firmado en Exportados/${outApk.name}"
-              else -> "APK parcheado guardado en Exportados/${outApk.name}"
+              overwriteOriginal && autoSign -> str(R.string.msg_apk_updated_signed, outApk.name)
+              overwriteOriginal -> str(R.string.msg_apk_updated_unsigned, outApk.name)
+              autoSign -> str(R.string.msg_apk_saved_signed_exports, outApk.name)
+              else -> str(R.string.msg_apk_patched_exports, outApk.name)
             }
           )
         } else {
@@ -1167,13 +1229,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
               )
             )
           }
-          postMessage("DEX guardado en ${outDex.name}")
+          postMessage(str(R.string.msg_dex_saved_in, outDex.name))
         }
       } catch (t: Throwable) {
         _uiState.update { state ->
           state.copy(dexEditor = state.dexEditor?.copy(isCompiling = false))
         }
-        postMessage("Error guardando/firmando: ${t.message}")
+        postMessage(str(R.string.msg_save_sign_error, t.message.orEmpty()))
       }
     }
   }
@@ -1242,9 +1304,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
           )
         }
         refreshBothPanes()
-        postMessage("Keystore creado: ${created.displayName}")
+        postMessage(str(R.string.msg_keystore_created, created.displayName))
       }.onFailure { e ->
-        postMessage("Error creando keystore: ${e.message}")
+        postMessage(str(R.string.msg_keystore_create_error, e.message.orEmpty()))
       }
     }
   }
@@ -1276,9 +1338,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
           )
         }
         refreshBothPanes()
-        postMessage("Keystore importado: ${profile.displayName}")
+        postMessage(str(R.string.msg_keystore_imported, profile.displayName))
       }.onFailure { e ->
-        postMessage("Error importando keystore: ${e.message}")
+        postMessage(str(R.string.msg_keystore_import_error, e.message.orEmpty()))
       }
     }
   }
@@ -1286,7 +1348,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
   fun signCurrentTargetApk() {
     val apkPath = _uiState.value.signerApkPath ?: return
     val profile = currentSelectedKeystore() ?: run {
-      postMessage("Selecciona o crea un Keystore primero")
+      postMessage(str(R.string.msg_select_keystore_first))
       return
     }
     viewModelScope.launch(Dispatchers.IO) {
@@ -1312,10 +1374,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             signerVerification = verification,
           )
         }
-        postMessage("APK firmado en Exportados/${outFile.name}")
+        postMessage(str(R.string.msg_apk_signed_exports, outFile.name))
       }.onFailure { e ->
         _uiState.update { it.copy(isSigning = false) }
-        postMessage("Error firmando APK: ${e.message}")
+        postMessage(str(R.string.msg_sign_apk_error, e.message.orEmpty()))
       }
     }
   }
@@ -1331,9 +1393,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     viewModelScope.launch(Dispatchers.IO) {
       runCatching {
         repo.exportFileToUri(file, destUri)
-        postMessage("Exportado ${file.name} al dispositivo")
+        postMessage(str(R.string.msg_exported_to_device, file.name))
       }.onFailure { e ->
-        postMessage("Error exportando: ${e.message}")
+        postMessage(str(R.string.msg_export_error, e.message.orEmpty()))
       }
     }
   }
