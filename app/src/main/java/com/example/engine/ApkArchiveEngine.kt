@@ -77,8 +77,57 @@ object ApkArchiveEngine {
 
   fun extractArchiveEntry(archiveFile: File, entryPath: String, destinationFile: File) {
     destinationFile.parentFile?.mkdirs()
-    val bytes = readArchiveEntryBytes(archiveFile, entryPath)
-    destinationFile.writeBytes(bytes)
+    ZipFile(archiveFile).use { zip ->
+      val entry = zip.getEntry(entryPath)
+        ?: throw IllegalArgumentException("No se encontró '$entryPath' en ${archiveFile.name}")
+      zip.getInputStream(entry).use { input ->
+        FileOutputStream(destinationFile).buffered().use { output ->
+          input.copyTo(output, bufferSize = 64 * 1024)
+        }
+      }
+    }
+  }
+
+  fun listDexFilesFast(apkFile: File): List<String> {
+    val dexFiles = mutableListOf<String>()
+    ZipFile(apkFile).use { zip ->
+      val enumEntries = zip.entries()
+      while (enumEntries.hasMoreElements()) {
+        val name = enumEntries.nextElement().name
+        if (name.matches(Regex("""^classes\d*\.dex$"""))) {
+          dexFiles += name
+        }
+      }
+    }
+    dexFiles.sortWith(compareBy<String> {
+      val num = it.removePrefix("classes").removeSuffix(".dex")
+      if (num.isEmpty()) 1 else num.toIntOrNull() ?: 999
+    })
+    return dexFiles
+  }
+
+  fun extractDexEntriesToDir(
+    apkFile: File,
+    dexNames: Collection<String>,
+    destDir: File,
+  ): Map<String, File> {
+    if (dexNames.isEmpty()) return emptyMap()
+    destDir.mkdirs()
+    val result = linkedMapOf<String, File>()
+    ZipFile(apkFile).use { zip ->
+      for (dexName in dexNames) {
+        val entry = zip.getEntry(dexName) ?: continue
+        val outFile = File(destDir, dexName)
+        outFile.parentFile?.mkdirs()
+        zip.getInputStream(entry).use { input ->
+          FileOutputStream(outFile).buffered().use { output ->
+            input.copyTo(output, bufferSize = 64 * 1024)
+          }
+        }
+        result[dexName] = outFile
+      }
+    }
+    return result
   }
 
   fun extractArchiveDirectory(archiveFile: File, internalDir: String, destRoot: File): Int {

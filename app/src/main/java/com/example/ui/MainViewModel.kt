@@ -21,6 +21,7 @@ import com.example.model.PaneSourceType
 import com.example.model.PaneState
 import com.example.model.SignatureReport
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,6 +30,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentHashMap
 
 enum class MainNavDestination {
   DUAL_FILES,
@@ -74,7 +76,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
   private var activeDecompilerSession: JavaDecompilerSession? = null
   private var activeDexWorkingDir: File? = null
-  private var activeDexWorkingFiles: Map<String, File> = emptyMap()
+  private val activeDexWorkingFiles = ConcurrentHashMap<String, File>()
+  private val modifiedDexEntries = ConcurrentHashMap.newKeySet<String>()
+  private var siblingDexExtractionJob: Job? = null
 
   init {
     viewModelScope.launch(Dispatchers.IO) {
@@ -659,37 +663,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     viewModelScope.launch(Dispatchers.IO) {
       closeDexEditorInternal()
       val apkFile = File(apkPath)
-      val summary = ApkArchiveEngine.inspectApk(apkFile)
-      if (summary.dexFiles.isEmpty()) {
+      val dexFiles = ApkArchiveEngine.listDexFilesFast(apkFile)
+      if (dexFiles.isEmpty()) {
         postMessage("El APK no contiene archivos classes*.dex")
         return@launch
       }
 
       val workDir = File(repo.cacheDir, "dex_edit_${System.nanoTime()}").apply { mkdirs() }
-      val extractedMap = mutableMapOf<String, File>()
-      for (dexName in summary.dexFiles) {
-        val outDex = File(workDir, dexName)
-        ApkArchiveEngine.extractArchiveEntry(apkFile, dexName, outDex)
-        extractedMap[dexName] = outDex
-      }
       activeDexWorkingDir = workDir
-      activeDexWorkingFiles = extractedMap
+      val targetDexName = initialDexName?.takeIf { it in dexFiles } ?: dexFiles.first()
+      val primaryDexOut = File(workDir, targetDexName)
+      ApkArchiveEngine.extractArchiveEntry(apkFile, targetDexName, primaryDexOut)
+      activeDexWorkingFiles[targetDexName] = primaryDexOut
 
-      val targetDexName = initialDexName?.takeIf { it in extractedMap } ?: summary.dexFiles.first()
+      val remainingDexNames = dexFiles.filter { it != targetDexName }
+      if (remainingDexNames.isNotEmpty()) {
+        siblingDexExtractionJob = viewModelScope.launch(Dispatchers.IO) {
+          val extractedSiblings = ApkArchiveEngine.extractDexEntriesToDir(apkFile, remainingDexNames, workDir)
+          activeDexWorkingFiles.putAll(extractedSiblings)
+        }
+      }
+
       _uiState.update {
         it.copy(
           apkInspector = null,
           dexEditor = DexEditorState(
-            targetFilePath = extractedMap.getValue(targetDexName).absolutePath,
+            targetFilePath = primaryDexOut.absolutePath,
             targetApkPath = apkFile.absolutePath,
             targetDisplayName = apkFile.name,
-            dexEntries = summary.dexFiles,
+            dexEntries = dexFiles,
             activeDexEntry = targetDexName,
             isLoadingIndex = true,
           ),
         )
       }
-      loadDexSessionIntoEditor(extractedMap.getValue(targetDexName), targetDexName)
+      loadDexSessionIntoEditor(primaryDexOut, targetDexName)
     }
   }
 
@@ -704,7 +712,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
       val workingDex = File(workDir, dexFile.name)
       dexFile.copyTo(workingDex, overwrite = true)
       activeDexWorkingDir = workDir
-      activeDexWorkingFiles = mapOf(dexFile.name to workingDex)
+      activeDexWorkingFiles[dexFile.name] = workingDex
 
       _uiState.update {
         it.copy(
@@ -758,8 +766,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun switchActiveDexEntry(dexEntryName: String) {
-    val workingDex = activeDexWorkingFiles[dexEntryName] ?: return
     viewModelScope.launch(Dispatchers.IO) {
+      siblingDexExtractionJob?.join()
+      val workingDex = activeDexWorkingFiles[dexEntryName] ?: return@launch
       _uiState.update { state ->
         state.copy(dexEditor = state.dexEditor?.copy(isLoadingIndex = true))
       }
@@ -824,6 +833,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun selectDexClass(cls: DexClassInfo) {
+    val session = activeDecompilerSession ?: return
+    val alreadyCached = session.isClassCached(cls.fullName)
     viewModelScope.launch(Dispatchers.IO) {
       _uiState.update { state ->
         state.copy(
@@ -832,23 +843,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             currentPackagePath = cls.packageName,
             showClassBrowser = false,
             decompilerMode = DecompilerMode.JAVA,
-            isDecompiling = true,
+            isDecompiling = !alreadyCached,
+            smaliCode = "",
             lastCompileResult = null,
           )
         )
       }
-      val session = activeDecompilerSession ?: return@launch
       val javaCode = runCatching { session.decompileClassToJava(cls.fullName) }
         .getOrElse { "// Error descompilando: ${it.message}" }
-      val smaliCode = runCatching { session.disassembleClassSummary(cls.fullName) }
-        .getOrElse { "# Error leyendo bytecode: ${it.message}" }
 
       _uiState.update { state ->
         state.copy(
           dexEditor = state.dexEditor?.copy(
             javaCode = javaCode,
             originalJavaCode = javaCode,
-            smaliCode = smaliCode,
             isDirty = false,
             isDecompiling = false,
             undoStack = emptyList(),
@@ -868,6 +876,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
   fun setDecompilerMode(mode: DecompilerMode) {
     _uiState.update { state ->
       state.copy(dexEditor = state.dexEditor?.copy(decompilerMode = mode))
+    }
+    if (mode == DecompilerMode.SMALI_INFO) {
+      val ed = _uiState.value.dexEditor ?: return
+      val cls = ed.selectedClass ?: return
+      if (ed.smaliCode.isEmpty()) {
+        val session = activeDecompilerSession ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+          val smaliCode = runCatching { session.disassembleClassSummary(cls.fullName) }
+            .getOrElse { "# Error leyendo bytecode: ${it.message}" }
+          _uiState.update { state ->
+            val curr = state.dexEditor ?: return@update state
+            if (curr.selectedClass?.fullName != cls.fullName) return@update state
+            state.copy(dexEditor = curr.copy(smaliCode = smaliCode))
+          }
+        }
+      }
     }
   }
 
@@ -928,6 +952,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
       }
 
       try {
+        siblingDexExtractionJob?.join()
         val targetDex = File(ed.targetFilePath)
         val siblings = activeDexWorkingFiles.values.filter { it.absolutePath != targetDex.absolutePath }
         val result = JavaToDexCompiler.compileJavaAndPatchDex(
@@ -939,13 +964,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         if (result.success) {
+          modifiedDexEntries += ed.activeDexEntry
           runCatching {
-            activeDecompilerSession?.close()
-            activeDecompilerSession = JavaDecompilerEngine.openDexSession(repo.cacheDir, targetDex, ed.activeDexEntry)
+            activeDecompilerSession?.reloadAfterPatch(cls.fullName)
           }
-          val updatedSmali = runCatching {
-            activeDecompilerSession?.disassembleClassSummary(cls.fullName) ?: ed.smaliCode
-          }.getOrDefault(ed.smaliCode)
+          val updatedSmali = if (ed.decompilerMode == DecompilerMode.SMALI_INFO) {
+            runCatching {
+              activeDecompilerSession?.disassembleClassSummary(cls.fullName) ?: ed.smaliCode
+            }.getOrDefault(ed.smaliCode)
+          } else {
+            ""
+          }
 
           _uiState.update { state ->
             state.copy(
@@ -1018,6 +1047,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // Step 1: If there are uncompiled Java edits, compile Java -> DEX automatically first
         if (ed.isDirty && ed.selectedClass != null) {
+          siblingDexExtractionJob?.join()
           val siblings = activeDexWorkingFiles.values.filter { it.absolutePath != targetDex.absolutePath }
           val compileRes = JavaToDexCompiler.compileJavaAndPatchDex(
             workRoot = repo.cacheDir,
@@ -1038,16 +1068,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             postMessage("Error de compilación Java: revisa los detalles abajo")
             return@launch
           }
+          modifiedDexEntries += ed.activeDexEntry
           runCatching {
-            activeDecompilerSession?.close()
-            activeDecompilerSession = JavaDecompilerEngine.openDexSession(repo.cacheDir, targetDex, ed.activeDexEntry)
+            activeDecompilerSession?.reloadAfterPatch(ed.selectedClass.fullName)
           }
         }
 
         // Step 2: Repackage and sign APK (or save standalone DEX)
         if (ed.targetApkPath != null) {
           val origApk = File(ed.targetApkPath)
-          val replacements = activeDexWorkingFiles.mapValues { (_, f) -> f.readBytes() }
+          val dexKeysToReplace = if (modifiedDexEntries.isNotEmpty()) {
+            modifiedDexEntries
+          } else {
+            emptySet()
+          }
+          val replacements = dexKeysToReplace.mapNotNull { key ->
+            activeDexWorkingFiles[key]?.let { key to it.readBytes() }
+          }.toMap()
           val suffix = if (autoSign) "_signed" else "_patched"
           val outApk = if (overwriteOriginal) {
             if (createBackup && origApk.exists()) {
@@ -1147,11 +1184,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   private fun closeDexEditorInternal() {
+    siblingDexExtractionJob?.cancel()
+    siblingDexExtractionJob = null
     activeDecompilerSession?.close()
     activeDecompilerSession = null
     activeDexWorkingDir?.deleteRecursively()
     activeDexWorkingDir = null
-    activeDexWorkingFiles = emptyMap()
+    activeDexWorkingFiles.clear()
+    modifiedDexEntries.clear()
   }
 
   // --- Signer Studio ---
