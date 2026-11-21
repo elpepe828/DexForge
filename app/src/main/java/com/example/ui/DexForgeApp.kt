@@ -152,7 +152,12 @@ fun DexForgeApp(viewModel: MainViewModel = viewModel()) {
       onUndo = viewModel::undoJavaEdit,
       onRedo = viewModel::redoJavaEdit,
       onCompileToDex = viewModel::compileEditedJavaToDex,
-      onSaveAndSign = viewModel::saveAndSignPatchedTarget,
+      onSaveAndSign = { autoSign, overwriteOriginal, createBackup ->
+        viewModel.saveAndSignPatchedTarget(autoSign, overwriteOriginal, createBackup)
+      },
+      onExportSavedFile = viewModel::requestExportToDevice,
+      onShareSavedFile = shareFile,
+      onDismissSavedBanner = viewModel::clearSavedApkBanner,
       onClose = viewModel::closeDexEditor,
     )
     return

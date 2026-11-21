@@ -937,23 +937,71 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
-  fun saveAndSignPatchedTarget(autoSign: Boolean) {
+  fun clearSavedApkBanner() {
+    _uiState.update { state ->
+      state.copy(dexEditor = state.dexEditor?.copy(lastSavedApkPath = null))
+    }
+  }
+
+  fun saveAndSignPatchedTarget(
+    autoSign: Boolean,
+    overwriteOriginal: Boolean = true,
+    createBackup: Boolean = true,
+  ) {
     val ed = _uiState.value.dexEditor ?: return
     viewModelScope.launch(Dispatchers.IO) {
       _uiState.update { state ->
-        state.copy(dexEditor = state.dexEditor?.copy(isCompiling = true))
+        state.copy(dexEditor = state.dexEditor?.copy(isCompiling = true, lastSavedApkPath = null))
       }
 
-      runCatching {
+      try {
         val targetDex = File(ed.targetFilePath)
+
+        // Step 1: If there are uncompiled Java edits, compile Java -> DEX automatically first
+        if (ed.isDirty && ed.selectedClass != null) {
+          val siblings = activeDexWorkingFiles.values.filter { it.absolutePath != targetDex.absolutePath }
+          val compileRes = JavaToDexCompiler.compileJavaAndPatchDex(
+            workRoot = repo.cacheDir,
+            targetDexFile = targetDex,
+            siblingDexFiles = siblings,
+            fullClassName = ed.selectedClass.fullName,
+            javaSource = ed.javaCode,
+          )
+          if (!compileRes.success) {
+            _uiState.update { state ->
+              state.copy(
+                dexEditor = state.dexEditor?.copy(
+                  isCompiling = false,
+                  lastCompileResult = compileRes,
+                )
+              )
+            }
+            postMessage("Error de compilación Java: revisa los detalles abajo")
+            return@launch
+          }
+          runCatching {
+            activeDecompilerSession?.close()
+            activeDecompilerSession = JavaDecompilerEngine.openDexSession(repo.cacheDir, targetDex, ed.activeDexEntry)
+          }
+        }
+
+        // Step 2: Repackage and sign APK (or save standalone DEX)
         if (ed.targetApkPath != null) {
           val origApk = File(ed.targetApkPath)
           val replacements = activeDexWorkingFiles.mapValues { (_, f) -> f.readBytes() }
           val suffix = if (autoSign) "_signed" else "_patched"
-          val outApk = File(
-            repo.exportsDir,
-            "${origApk.nameWithoutExtension}$suffix.apk",
-          )
+          val outApk = if (overwriteOriginal) {
+            if (createBackup && origApk.exists()) {
+              val bakFile = File(origApk.parentFile, "${origApk.name}.bak")
+              if (!bakFile.exists()) {
+                origApk.copyTo(bakFile, overwrite = false)
+              }
+            }
+            origApk
+          } else {
+            File(repo.exportsDir, "${origApk.nameWithoutExtension}$suffix.apk")
+          }
+
           val tempPatched = File(repo.cacheDir, "patched_${System.nanoTime()}.apk")
           ApkArchiveEngine.replaceOrAddEntries(
             sourceArchive = origApk,
@@ -984,35 +1032,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             state.copy(
               dexEditor = state.dexEditor?.copy(
                 isCompiling = false,
+                isDirty = false,
+                originalJavaCode = ed.javaCode,
                 hasUncommittedDexChanges = false,
+                lastSavedApkPath = outApk.absolutePath,
               ),
               signerApkPath = outApk.absolutePath,
             )
           }
           postMessage(
-            if (autoSign) "APK guardado y firmado en Exportados/${outApk.name}"
-            else "APK parcheado (sin firma) guardado en Exportados/${outApk.name}"
+            when {
+              overwriteOriginal && autoSign -> "APK original actualizado y firmado: ${outApk.name}"
+              overwriteOriginal -> "APK original actualizado (sin firma): ${outApk.name}"
+              autoSign -> "APK guardado y firmado en Exportados/${outApk.name}"
+              else -> "APK parcheado guardado en Exportados/${outApk.name}"
+            }
           )
         } else {
-          // Standalone DEX save back
-          val outDex = File(repo.exportsDir, ed.targetDisplayName)
-          targetDex.copyTo(outDex, overwrite = true)
+          val outDex = if (overwriteOriginal) File(ed.targetFilePath) else File(repo.exportsDir, ed.targetDisplayName)
+          if (outDex.absolutePath != targetDex.absolutePath) {
+            targetDex.copyTo(outDex, overwrite = true)
+          }
           refreshBothPanes()
           _uiState.update { state ->
             state.copy(
               dexEditor = state.dexEditor?.copy(
                 isCompiling = false,
+                isDirty = false,
+                originalJavaCode = ed.javaCode,
                 hasUncommittedDexChanges = false,
+                lastSavedApkPath = outDex.absolutePath,
               )
             )
           }
-          postMessage("DEX guardado en Exportados/${outDex.name}")
+          postMessage("DEX guardado en ${outDex.name}")
         }
-      }.onFailure { e ->
+      } catch (t: Throwable) {
         _uiState.update { state ->
           state.copy(dexEditor = state.dexEditor?.copy(isCompiling = false))
         }
-        postMessage("Error guardando/firmando: ${e.message}")
+        postMessage("Error guardando/firmando: ${t.message}")
       }
     }
   }

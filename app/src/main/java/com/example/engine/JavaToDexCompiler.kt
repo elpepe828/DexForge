@@ -553,8 +553,7 @@ object JavaToDexCompiler {
       if (parent != null && canLoadRuntimeClass("$parent$$name")) return false
 
       if (dotName in knownPackages) return true
-      // Common root namespaces on Android
-      return dotName == "java" ||
+      val isStandardRoot = dotName == "java" ||
         dotName == "javax" ||
         dotName == "android" ||
         dotName == "androidx" ||
@@ -562,6 +561,18 @@ object JavaToDexCompiler {
         dotName == "dalvik" ||
         dotName == "org" ||
         dotName == "com"
+      if (isStandardRoot) return true
+
+      // Dynamically allow lowercase subpackages under standard Android/JDK namespaces
+      val isUnderStandardPrefix = dotName.startsWith("java.") ||
+        dotName.startsWith("javax.") ||
+        dotName.startsWith("android.") ||
+        dotName.startsWith("androidx.") ||
+        dotName.startsWith("dalvik.") ||
+        dotName.startsWith("org.json.") ||
+        dotName.startsWith("org.w3c.") ||
+        dotName.startsWith("org.xml.")
+      return isUnderStandardPrefix && name.isNotEmpty() && name[0].isLowerCase()
     }
 
     private fun canLoadRuntimeClass(dotName: String): Boolean {

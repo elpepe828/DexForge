@@ -44,8 +44,10 @@ import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -58,6 +60,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -100,7 +103,10 @@ fun JavaCodeEditorScreen(
   onUndo: () -> Unit,
   onRedo: () -> Unit,
   onCompileToDex: () -> Unit,
-  onSaveAndSign: (Boolean) -> Unit,
+  onSaveAndSign: (autoSign: Boolean, overwriteOriginal: Boolean, createBackup: Boolean) -> Unit,
+  onExportSavedFile: (java.io.File) -> Unit,
+  onShareSavedFile: (java.io.File) -> Unit,
+  onDismissSavedBanner: () -> Unit,
   onClose: () -> Unit,
 ) {
   BackHandler(onBack = onClose)
@@ -110,6 +116,7 @@ fun JavaCodeEditorScreen(
   var findText by remember { mutableStateOf("") }
   var replaceText by remember { mutableStateOf("") }
   var showBuildLogs by remember { mutableStateOf(false) }
+  var showConfirmSaveDialog by remember { mutableStateOf(false) }
 
   Surface(
     modifier = Modifier
@@ -251,7 +258,7 @@ fun JavaCodeEditorScreen(
               }
 
               Button(
-                onClick = { onSaveAndSign(true) },
+                onClick = { showConfirmSaveDialog = true },
                 enabled = !state.isCompiling,
                 colors = ButtonDefaults.buttonColors(
                   containerColor = MaterialTheme.colorScheme.tertiary,
@@ -267,7 +274,7 @@ fun JavaCodeEditorScreen(
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                  if (state.targetApkPath != null) "Guardar y Firmar APK" else "Guardar DEX",
+                  if (state.targetApkPath != null) "Confirmar y Firmar APK" else "Guardar DEX",
                   style = MaterialTheme.typography.labelLarge,
                 )
               }
@@ -392,6 +399,57 @@ fun JavaCodeEditorScreen(
             onToggleExpand = { showBuildLogs = !showBuildLogs },
           )
         }
+
+        // Ready-to-use Saved & Signed APK Banner
+        state.lastSavedApkPath?.let { savedPath ->
+          val savedFile = remember(savedPath) { java.io.File(savedPath) }
+          Surface(
+            color = MaterialTheme.colorScheme.tertiaryContainer,
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.tertiary)
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = "Listo: ${savedFile.name}",
+                  style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                  text = "Cambios compilados en DEX y APK firmado",
+                  style = MaterialTheme.typography.labelSmall,
+                )
+              }
+              TextButton(onClick = { onExportSavedFile(savedFile) }) {
+                Text("Exportar")
+              }
+              TextButton(onClick = { onShareSavedFile(savedFile) }) {
+                Text("Compartir")
+              }
+              IconButton(onClick = onDismissSavedBanner, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Default.Close, contentDescription = "Cerrar aviso")
+              }
+            }
+          }
+        }
+      }
+
+      if (showConfirmSaveDialog) {
+        ConfirmApplyAndSignDialog(
+          isApk = state.targetApkPath != null,
+          apkName = state.targetDisplayName,
+          hasUncompiledEdits = state.isDirty,
+          onDismiss = { showConfirmSaveDialog = false },
+          onConfirm = { autoSign, overwriteOriginal, createBackup ->
+            showConfirmSaveDialog = false
+            onSaveAndSign(autoSign, overwriteOriginal, createBackup)
+          },
+        )
       }
 
       if (showClassSheet && !isWide) {
@@ -696,3 +754,162 @@ private class JavaSyntaxVisualTransformation : VisualTransformation {
     return TransformedText(highlighted, OffsetMapping.Identity)
   }
 }
+
+@Composable
+private fun ConfirmApplyAndSignDialog(
+  isApk: Boolean,
+  apkName: String,
+  hasUncompiledEdits: Boolean,
+  onDismiss: () -> Unit,
+  onConfirm: (autoSign: Boolean, overwriteOriginal: Boolean, createBackup: Boolean) -> Unit,
+) {
+  var overwriteOriginal by remember { mutableStateOf(true) }
+  var createBackup by remember { mutableStateOf(true) }
+  var autoSign by remember { mutableStateOf(true) }
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    icon = {
+      Icon(
+        imageVector = if (isApk) Icons.Default.VerifiedUser else Icons.Default.Save,
+        contentDescription = null,
+        tint = MaterialTheme.colorScheme.primary,
+      )
+    },
+    title = {
+      Text(
+        text = if (isApk) "Confirmar cambios y firmar APK" else "Confirmar y guardar DEX",
+      )
+    },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+          text = buildString {
+            if (hasUncompiledEdits) {
+              append("Se compilará automáticamente tu código Java modificado a bytecode .dex")
+              if (isApk) append(", se aplicará dentro de \"$apkName\" y se firmará listo para usar.")
+              else append(" y se guardará el archivo.")
+            } else {
+              if (isApk) append("Se empaquetará el DEX parcheado en \"$apkName\" y se aplicará la firma digital.")
+              else append("Se guardará el archivo DEX modificado.")
+            }
+          },
+          style = MaterialTheme.typography.bodyMedium,
+        )
+
+        if (isApk) {
+          HorizontalDivider()
+          Text(
+            text = "Destino de guardado",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+          )
+
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable { overwriteOriginal = true }
+              .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            RadioButton(
+              selected = overwriteOriginal,
+              onClick = { overwriteOriginal = true },
+            )
+            Column(modifier = Modifier.weight(1f)) {
+              Text("Guardar en el APK original", style = MaterialTheme.typography.bodyMedium)
+              Text(
+                "Actualiza directamente $apkName",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+            }
+          }
+
+          if (overwriteOriginal) {
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 24.dp)
+                .clickable { createBackup = !createBackup },
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Checkbox(
+                checked = createBackup,
+                onCheckedChange = { createBackup = it },
+              )
+              Text(
+                "Crear copia de respaldo (.bak)",
+                style = MaterialTheme.typography.bodySmall,
+              )
+            }
+          }
+
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable { overwriteOriginal = false }
+              .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            RadioButton(
+              selected = !overwriteOriginal,
+              onClick = { overwriteOriginal = false },
+            )
+            Column(modifier = Modifier.weight(1f)) {
+              Text("Guardar copia en Exportados/", style = MaterialTheme.typography.bodyMedium)
+              Text(
+                "Conserva el original intacto y crea un APK nuevo",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+            }
+          }
+
+          HorizontalDivider()
+
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable { autoSign = !autoSign }
+              .padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Checkbox(
+              checked = autoSign,
+              onCheckedChange = { autoSign = it },
+            )
+            Column(modifier = Modifier.weight(1f)) {
+              Text("Firmar automáticamente (v1 / v2 / v3)", style = MaterialTheme.typography.bodyMedium)
+              Text(
+                "Necesario para poder instalar el APK en Android",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+            }
+          }
+        }
+      }
+    },
+    confirmButton = {
+      Button(
+        onClick = { onConfirm(autoSign, overwriteOriginal, createBackup) },
+        modifier = Modifier.testTag("confirm_apply_and_sign_btn"),
+      ) {
+        Text(
+          when {
+            !isApk -> "Guardar DEX"
+            autoSign -> "Aplicar y Firmar"
+            else -> "Aplicar sin firmar"
+          }
+        )
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("Cancelar")
+      }
+    },
+  )
+}
+

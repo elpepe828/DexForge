@@ -155,4 +155,5 @@ data class DexEditorState(
   val redoStack: List<String> = emptyList(),
   val lastCompileResult: CompilePatchResult? = null,
   val hasUncommittedDexChanges: Boolean = false,
+  val lastSavedApkPath: String? = null,
 )
