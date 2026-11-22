@@ -225,4 +225,8 @@ For code contributions, keep changes focused and explain the purpose of the chan
 
 ## License
 
-A project license has not been confirmed in the repository files reviewed for this README. Until the owner adds a license, users should not assume that reuse, redistribution, or modification is permitted.
+DexForge is distributed under the **GNU General Public License v3.0 (GPL-3.0)**. You may use, study, modify, and redistribute the project under the terms and conditions of that license.
+
+A complete copy of the license is available in the repository's [LICENSE](LICENSE) file. Before redistributing a build, review the license obligations that apply to the source and any bundled third-party components. Third-party dependencies remain subject to their own licenses; see their respective project and license files for details.
+
+SPDX-License-Identifier: GPL-3.0-only
