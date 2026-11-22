@@ -8,6 +8,19 @@ data class DeobfuscationPlan(
   val suggestions: List<DeobfuscationSuggestion>,
 )
 
+data class ObfuscatedCandidate(
+  val name: String,
+  val kindHint: DeobfuscationSymbolKind,
+  val occurrences: Int,
+)
+
+data class CompactedJavaContext(
+  val compactCode: String,
+  val candidates: List<ObfuscatedCandidate>,
+  val originalChars: Int,
+  val isSmallClass: Boolean,
+)
+
 object JavaSymbolRenamer {
 
   private val JAVA_KEYWORDS = setOf(
@@ -22,7 +35,30 @@ object JavaSymbolRenamer {
 
   private val PROTECTED_OVERRIDES = setOf(
     "onCreate", "onStart", "onResume", "onPause", "onStop", "onDestroy", "onClick",
+    "onBindViewHolder", "onCreateViewHolder", "getItemCount", "onReceive", "onHandleIntent",
     "toString", "equals", "hashCode", "compareTo", "run", "call", "main", "clone",
+  )
+
+  private val SAFE_SHORT_IDENTIFIERS = setOf(
+    "id", "io", "os", "ui", "db", "to", "of", "in", "on", "is", "it", "ok", "up",
+    "go", "by", "at", "or", "as", "if", "do", "vm", "dx", "tv", "iv", "et", "rv",
+    "ctx", "tag", "key", "url", "uri", "apk", "dex", "log", "msg", "err", "res",
+    "idx", "len", "max", "min", "sum", "map", "set", "out", "buf", "src", "dst",
+    "app", "row", "col", "pos", "end",
+  )
+
+  private val PROGUARD_NAME_REGEX = Regex(
+    """^(?:[fmCp][0-9]+[a-zA-Z0-9_]*|mo[0-9]+[a-zA-Z0-9_]*|(?:Abstract|Interface|Runnable|Callable|ViewOnClickListener|C)[0-9]+[a-zA-Z0-9_]*|[a-z]{1,4}[0-9]+|var[0-9]+|arg[0-9]+|param[0-9]+|str[0-9]*|obj[0-9]*|method_[0-9]+|field_[0-9]+)$"""
+  )
+
+  private val STANDARD_IMPORT_PREFIXES = listOf(
+    "import java.",
+    "import javax.",
+    "import android.",
+    "import androidx.",
+    "import kotlin.",
+    "import kotlinx.",
+    "import dalvik.",
   )
 
   fun isValidJavaIdentifier(name: String): Boolean {
@@ -44,6 +80,124 @@ object JavaSymbolRenamer {
       }
     }
     return ids
+  }
+
+  fun isLikelyObfuscatedIdentifier(name: String): Boolean {
+    if (name.isEmpty() || name in JAVA_KEYWORDS || name in PROTECTED_OVERRIDES) return false
+    val lower = name.lowercase()
+    if (lower in SAFE_SHORT_IDENTIFIERS) return false
+    if (name.length <= 2) return true
+    if (name.contains('$')) return true
+    if (PROGUARD_NAME_REGEX.matches(name)) return true
+    return false
+  }
+
+  fun prepareCompactContextForAi(
+    javaSource: String,
+    topLevelClassSimpleName: String?,
+    maxChars: Int = 18_000,
+  ): CompactedJavaContext {
+    // 1. Collect candidate obfuscated symbols + occurrence counts & heuristic kinds.
+    val counts = LinkedHashMap<String, Int>()
+    val kindScores = HashMap<String, MutableMap<DeobfuscationSymbolKind, Int>>()
+    val tokensList = ArrayList<JavaToken>(1024)
+    val tokenInPkgOrImport = ArrayList<Boolean>(1024)
+    val tokenIsAnno = ArrayList<Boolean>(1024)
+
+    scanJavaTokens(javaSource) { token, inPkgOrImp, isAnno ->
+      if (token.kind != TokenKind.WHITESPACE && token.kind != TokenKind.COMMENT) {
+        tokensList += token
+        tokenInPkgOrImport += inPkgOrImp
+        tokenIsAnno += isAnno
+      }
+    }
+
+    for (idx in tokensList.indices) {
+      val tok = tokensList[idx]
+      if (tok.kind != TokenKind.IDENTIFIER || tokenInPkgOrImport[idx] || tokenIsAnno[idx]) continue
+      val prev = if (idx > 0) tokensList[idx - 1] else null
+      val next = if (idx + 1 < tokensList.size) tokensList[idx + 1] else null
+      // Skip external receiver calls like `other.a()` unless it's `this.a` or `ClassName.a`
+      if (prev?.kind == TokenKind.DOT) {
+        val twoBack = if (idx >= 2) tokensList[idx - 2].text else null
+        val isOwnReceiver = twoBack == "this" || twoBack == "super" ||
+          (topLevelClassSimpleName != null && twoBack == topLevelClassSimpleName)
+        if (!isOwnReceiver) continue
+      }
+      if (!isLikelyObfuscatedIdentifier(tok.text)) continue
+
+      counts[tok.text] = (counts[tok.text] ?: 0) + 1
+      val twoBack = if (idx >= 2) tokensList[idx - 2].text else null
+      val kind = when {
+        prev?.text in setOf("class", "interface", "enum") -> DeobfuscationSymbolKind.CLASS
+        next?.text == "(" -> DeobfuscationSymbolKind.METHOD
+        (prev?.text in setOf("private", "protected", "public", "static", "final", "volatile", "transient") ||
+          twoBack in setOf("private", "protected", "public", "static", "final", "volatile", "transient")) &&
+          next?.text in setOf("=", ";", ",") ->
+          DeobfuscationSymbolKind.FIELD
+        else -> DeobfuscationSymbolKind.PARAM_OR_VAR
+      }
+      val map = kindScores.getOrPut(tok.text) { HashMap() }
+      map[kind] = (map[kind] ?: 0) + 1
+    }
+
+    val candidates = counts.entries
+      .sortedByDescending { it.value }
+      .map { (name, count) ->
+        val scores = kindScores[name].orEmpty()
+        val bestKind = when {
+          (scores[DeobfuscationSymbolKind.CLASS] ?: 0) > 0 -> DeobfuscationSymbolKind.CLASS
+          (scores[DeobfuscationSymbolKind.METHOD] ?: 0) > 0 -> DeobfuscationSymbolKind.METHOD
+          (scores[DeobfuscationSymbolKind.FIELD] ?: 0) > 0 -> DeobfuscationSymbolKind.FIELD
+          else -> DeobfuscationSymbolKind.PARAM_OR_VAR
+        }
+        ObfuscatedCandidate(name = name, kindHint = bestKind, occurrences = count)
+      }
+
+    // 2. Compact Java source without losing semantic context (API calls, strings, control flow).
+    val compactedLines = ArrayList<String>()
+    var previousBlank = false
+    for (rawLine in javaSource.lineSequence()) {
+      val trimmedEnd = rawLine.trimEnd()
+      val trimmed = trimmedEnd.trim()
+      if (trimmed.isEmpty()) {
+        if (!previousBlank && compactedLines.isNotEmpty()) {
+          compactedLines += ""
+          previousBlank = true
+        }
+        continue
+      }
+      if (STANDARD_IMPORT_PREFIXES.any { trimmed.startsWith(it) }) continue
+      if (trimmed.startsWith("/* JADX") || trimmed.startsWith("// JADX") ||
+        trimmed.startsWith("/* compiled from:") || trimmed.startsWith("/* renamed from:")
+      ) {
+        continue
+      }
+      previousBlank = false
+      // Shrink 4-space indentation down to 2 spaces to cut token count cleanly.
+      var leadingSpaces = 0
+      while (leadingSpaces < trimmedEnd.length && trimmedEnd[leadingSpaces] == ' ') {
+        leadingSpaces++
+      }
+      val shrunkIndent = " ".repeat((leadingSpaces + 1) / 2)
+      compactedLines += "$shrunkIndent$trimmed"
+    }
+
+    val joined = compactedLines.joinToString("\n").trim()
+    val finalCode = if (joined.length > maxChars) {
+      val cutoff = joined.lastIndexOf('\n', maxChars).takeIf { it > maxChars / 2 } ?: maxChars
+      joined.substring(0, cutoff) + "\n// ... [truncated for analysis]"
+    } else {
+      joined
+    }
+
+    val isSmallClass = finalCode.length <= 2_600 && candidates.size <= 10
+    return CompactedJavaContext(
+      compactCode = finalCode,
+      candidates = candidates,
+      originalChars = javaSource.length,
+      isSmallClass = isSmallClass,
+    )
   }
 
   fun parseDeobfuscationJson(

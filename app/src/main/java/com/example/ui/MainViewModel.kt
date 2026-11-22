@@ -13,12 +13,14 @@ import com.example.engine.AiDeobfuscationEngine
 import com.example.engine.ApkArchiveEngine
 import com.example.engine.AxmlDecoder
 import com.example.engine.DeobfuscationPlan
+import com.example.engine.DeobfuscationProgress
 import com.example.engine.JavaDecompilerEngine
 import com.example.engine.JavaDecompilerSession
 import com.example.engine.JavaSymbolRenamer
 import com.example.engine.JavaToDexCompiler
 import com.example.model.ApkMetadataSummary
 import com.example.model.DecompilerMode
+import com.example.model.DeobfuscationPhase
 import com.example.model.DeobfuscationUiState
 import com.example.model.DexClassInfo
 import com.example.model.DexEditorState
@@ -109,9 +111,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     javaSource: String,
     languageTag: String,
     useFastModel: Boolean,
-    onProgress: (Int) -> Unit,
+    onProgress: (DeobfuscationProgress) -> Unit,
   ) -> DeobfuscationPlan = { full, simple, code, lang, fast, onProgress ->
     AiDeobfuscationEngine.analyzeClassForDeobfuscation(
+      context = getApplication(),
       fullClassName = full,
       simpleClassName = simple,
       javaSource = code,
@@ -1066,6 +1069,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val intervalSeconds = deobfuscationCheckInIntervalSeconds.coerceAtLeast(1)
     nextDeobfuscationPromptAtSeconds.set(intervalSeconds)
 
+    val initialModelName = if (useFastModel) {
+      AiDeobfuscationEngine.FAST_MODEL_NAME
+    } else {
+      AiDeobfuscationEngine.PRIMARY_MODEL_NAME
+    }
+
     _uiState.update { state ->
       val curr = state.dexEditor ?: return@update state
       if (curr.selectedClass?.fullName != cls.fullName) return@update state
@@ -1074,8 +1083,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
           deobfuscationState = DeobfuscationUiState.Loading(
             elapsedSeconds = 0,
             streamedChars = 0,
+            chunkCount = 0,
             awaitingContinueDecision = false,
             useFastModel = useFastModel,
+            phase = DeobfuscationPhase.PREPARING_CONTEXT,
+            activeModelName = initialModelName,
           )
         )
       )
@@ -1126,15 +1138,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
           ed.javaCode,
           langTag,
           useFastModel,
-        ) { streamedChars ->
+        ) { progress ->
           _uiState.update { state ->
             val curr = state.dexEditor ?: return@update state
             if (curr.selectedClass?.fullName != cls.fullName) return@update state
             val loading = curr.deobfuscationState as? DeobfuscationUiState.Loading ?: return@update state
-            if (loading.streamedChars == streamedChars) return@update state
             state.copy(
               dexEditor = curr.copy(
-                deobfuscationState = loading.copy(streamedChars = streamedChars)
+                deobfuscationState = loading.copy(
+                  phase = progress.phase,
+                  streamedChars = progress.streamedChars,
+                  chunkCount = progress.chunkCount,
+                  activeModelName = progress.activeModelName,
+                  autoFastSelected = progress.autoFastSelected,
+                  candidateCount = progress.candidateCount,
+                  isSlowInitialConnection = progress.isSlowInitialConnection,
+                )
               )
             )
           }
@@ -1173,7 +1192,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
       } catch (e: Exception) {
         tickerJob.cancel()
         Log.e("MainViewModel", "Deobfuscation analysis failed", e)
-        val msg = AiDeobfuscationEngine.formatErrorMessage(e, str(R.string.deobf_error_generic))
+        val msg = AiDeobfuscationEngine.formatErrorMessage(
+          error = e,
+          fallback = str(R.string.deobf_error_generic),
+          offlineText = str(R.string.deobf_error_offline),
+          stallInitialText = { model, secs -> str(R.string.deobf_error_initial_stall, model, secs) },
+          appCheckText = { detail -> str(R.string.deobf_error_app_check, detail) },
+        )
         _uiState.update { state ->
           val curr = state.dexEditor ?: return@update state
           if (curr.selectedClass?.fullName != cls.fullName) return@update state

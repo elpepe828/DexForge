@@ -85,6 +85,7 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.model.CompilePatchResult
 import com.example.model.DecompilerMode
+import com.example.model.DeobfuscationPhase
 import com.example.model.DeobfuscationSuggestion
 import com.example.model.DeobfuscationSymbolKind
 import com.example.model.DeobfuscationUiState
@@ -953,10 +954,21 @@ private fun ContextDeobfuscationDialog(
           val mins = uiState.elapsedSeconds / 60
           val secs = uiState.elapsedSeconds % 60
           val elapsedText = "%02d:%02d".format(mins, secs)
-          val activeModelName = if (uiState.useFastModel) {
-            com.example.engine.AiDeobfuscationEngine.FAST_MODEL_NAME
-          } else {
-            com.example.engine.AiDeobfuscationEngine.PRIMARY_MODEL_NAME
+          val activeModelName = uiState.activeModelName
+
+          val phaseText = when (uiState.phase) {
+            DeobfuscationPhase.PREPARING_CONTEXT ->
+              stringResource(R.string.deobf_phase_preparing)
+            DeobfuscationPhase.CHECKING_APP_CHECK ->
+              stringResource(R.string.deobf_phase_app_check)
+            DeobfuscationPhase.CONNECTING_MODEL ->
+              stringResource(R.string.deobf_connecting_model, activeModelName)
+            DeobfuscationPhase.THINKING ->
+              stringResource(R.string.deobf_phase_thinking, activeModelName, uiState.chunkCount)
+            DeobfuscationPhase.STREAMING ->
+              stringResource(R.string.deobf_streaming_progress, uiState.streamedChars)
+            DeobfuscationPhase.PARSING ->
+              stringResource(R.string.deobf_phase_parsing)
           }
 
           Column(
@@ -987,14 +999,60 @@ private fun ContextDeobfuscationDialog(
                   modifier = Modifier.testTag("deobf_elapsed_text"),
                 )
                 Text(
-                  text = if (uiState.streamedChars > 0) {
-                    stringResource(R.string.deobf_streaming_progress, uiState.streamedChars)
-                  } else {
-                    stringResource(R.string.deobf_connecting_model, activeModelName)
-                  },
+                  text = phaseText,
                   style = MaterialTheme.typography.labelSmall,
                   color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  modifier = Modifier.testTag("deobf_phase_text"),
                 )
+                if (uiState.candidateCount > 0 || uiState.autoFastSelected) {
+                  val metaParts = buildList {
+                    if (uiState.candidateCount > 0) {
+                      add(stringResource(R.string.deobf_candidates_detected, uiState.candidateCount))
+                    }
+                    if (uiState.autoFastSelected) {
+                      add(stringResource(R.string.deobf_auto_fast_badge))
+                    }
+                  }
+                  Text(
+                    text = metaParts.joinToString(" • "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                  )
+                }
+              }
+            }
+
+            if (uiState.isSlowInitialConnection &&
+              !uiState.useFastModel &&
+              !uiState.autoFastSelected &&
+              !uiState.awaitingContinueDecision
+            ) {
+              Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                shape = MaterialTheme.shapes.small,
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .testTag("deobf_slow_connect_card"),
+              ) {
+                Column(
+                  modifier = Modifier.padding(10.dp),
+                  verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                  Text(
+                    text = stringResource(R.string.deobf_slow_initial_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                  OutlinedButton(
+                    onClick = onRetryFast,
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .heightIn(min = 48.dp)
+                      .testTag("deobf_switch_fast_btn"),
+                  ) {
+                    Text(stringResource(R.string.deobf_btn_try_fast_mode))
+                  }
+                }
               }
             }
 

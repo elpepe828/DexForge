@@ -7,8 +7,12 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
+import com.example.engine.AiConnectionStallException
+import com.example.engine.AiDeobfuscationEngine
 import com.example.engine.DeobfuscationPlan
+import com.example.engine.DeobfuscationProgress
 import com.example.model.DecompilerMode
+import com.example.model.DeobfuscationPhase
 import com.example.model.DeobfuscationSuggestion
 import com.example.model.DeobfuscationSymbolKind
 import com.example.model.DeobfuscationUiState
@@ -17,7 +21,9 @@ import com.example.model.DexEditorState
 import com.example.ui.MainViewModel
 import com.example.ui.components.JavaCodeEditorScreen
 import com.example.ui.theme.DexForgeTheme
+import com.example.util.AppCheckAttestationException
 import com.example.util.LocaleManager
+import com.example.util.NoNetworkException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -116,7 +122,13 @@ class ExampleRobolectricTest {
       val deferred = CompletableDeferred<DeobfuscationPlan>()
       vm.deobfuscationAnalyzer = { _, _, _, _, _, onProgress ->
         analyzerCalls++
-        onProgress(128)
+        onProgress(
+          DeobfuscationProgress(
+            phase = DeobfuscationPhase.STREAMING,
+            streamedChars = 128,
+            chunkCount = 2,
+          )
+        )
         deferred.await()
       }
 
@@ -248,5 +260,104 @@ class ExampleRobolectricTest {
     assertTrue(continued)
     composeRule.onNodeWithTag("deobf_stop_btn").assertIsDisplayed().performClick()
     assertTrue(stopped)
+  }
+
+  @Test
+  fun `deobfuscation dialog shows slow connection fast-mode switch before 90s`() {
+    var switchedToFast = false
+    val sampleClass = DexClassInfo(
+      fullName = "com.demo.BigClass",
+      packageName = "com.demo",
+      simpleName = "BigClass",
+      dexEntryName = "classes.dex",
+      methodCount = 20,
+      fieldCount = 10,
+      isInterface = false,
+      isEnum = false,
+    )
+    composeRule.activityRule.scenario.onActivity { activity ->
+      activity.setContent {
+        DexForgeTheme(darkTheme = true) {
+          JavaCodeEditorScreen(
+            state = DexEditorState(
+              targetFilePath = "/tmp/classes.dex",
+              targetApkPath = null,
+              targetDisplayName = "classes.dex",
+              selectedClass = sampleClass,
+              showClassBrowser = false,
+              decompilerMode = DecompilerMode.JAVA,
+              javaCode = "class BigClass {}",
+              deobfuscationState = DeobfuscationUiState.Loading(
+                elapsedSeconds = 12,
+                streamedChars = 0,
+                chunkCount = 0,
+                awaitingContinueDecision = false,
+                useFastModel = false,
+                phase = DeobfuscationPhase.CONNECTING_MODEL,
+                activeModelName = AiDeobfuscationEngine.PRIMARY_MODEL_NAME,
+                candidateCount = 14,
+                isSlowInitialConnection = true,
+              ),
+            ),
+            onSelectClass = {},
+            onOpenPackageFolder = {},
+            onNavigateUpFolder = {},
+            onOpenClassBrowser = {},
+            onReturnToCodeEditor = {},
+            onCompileAndReturnToBrowser = {},
+            onDiscardAndReturnToBrowser = {},
+            onSwitchDexEntry = {},
+            onSearchQueryChange = {},
+            onSearchScopeChange = {},
+            onModeChange = {},
+            onCodeChange = {},
+            onUndo = {},
+            onRedo = {},
+            onCompileToDex = {},
+            onSaveAndSign = { _, _, _ -> },
+            onAnalyzeObfuscated = {},
+            onAnalyzeObfuscatedFast = { switchedToFast = true },
+            onContinueDeobfWaiting = {},
+            onToggleDeobfSuggestion = {},
+            onSetAllDeobfSelected = {},
+            onApplyDeobfSuggestions = {},
+            onDismissDeobfDialog = {},
+            onExportSavedFile = {},
+            onShareSavedFile = {},
+            onDismissSavedBanner = {},
+            onClose = {},
+          )
+        }
+      }
+    }
+
+    composeRule.onNodeWithTag("deobf_phase_text").assertIsDisplayed()
+    composeRule.onNodeWithTag("deobf_slow_connect_card").assertIsDisplayed()
+    composeRule.onNodeWithTag("deobf_switch_fast_btn").assertIsDisplayed().performClick()
+    assertTrue(switchedToFast)
+  }
+
+  @Test
+  fun `ai deobfuscation formatErrorMessage classifies offline stall and app check failures`() {
+    val offline = AiDeobfuscationEngine.formatErrorMessage(
+      error = NoNetworkException("offline"),
+      fallback = "fallback",
+      offlineText = "Sin red",
+    )
+    assertEquals("Sin red", offline)
+
+    val stall = AiDeobfuscationEngine.formatErrorMessage(
+      error = AiConnectionStallException("stalled", "gemini-3.8-flash", 35, isInitialStall = true),
+      fallback = "fallback",
+      stallInitialText = { model, secs -> "Stalled on $model at ${secs}s" },
+    )
+    assertEquals("Stalled on gemini-3.8-flash at 35s", stall)
+
+    val appCheck = AiDeobfuscationEngine.formatErrorMessage(
+      error = AppCheckAttestationException("debug token rejected"),
+      fallback = "fallback",
+      appCheckText = { detail -> "AppCheck: $detail" },
+    )
+    assertEquals("AppCheck: debug token rejected", appCheck)
   }
 }

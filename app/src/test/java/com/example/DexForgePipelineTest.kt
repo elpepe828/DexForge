@@ -395,4 +395,61 @@ class DexForgePipelineTest {
     assertTrue(renamed.contains("String expectedToken2 = this.expectedToken + \"a\";"))
     assertTrue(renamed.contains("return verifyToken(\"ok\""))
   }
+
+  @Test
+  fun javaSymbolRenamer_preparesCompactContextAndExtractsObfuscatedCandidates() {
+    val rawJadxCode = """
+      package p000a.b;
+
+      import android.util.Log;
+      import java.util.List;
+      import com.custom.SecretHelper;
+
+      /* JADX WARNING: Code restructure failed */
+      public class C0012a {
+          private String f12a = "auth_token";
+
+          public boolean m3b(String a, List<String> b) {
+              if (a == null || b.isEmpty()) {
+                  return false;
+              }
+              Log.d("Auth", "validating");
+              return a.equals(this.f12a) && SecretHelper.check(a);
+          }
+
+          public void onCreate() {
+              m3b("ok", java.util.Collections.emptyList());
+          }
+      }
+    """.trimIndent()
+
+    val compacted = com.example.engine.JavaSymbolRenamer.prepareCompactContextForAi(
+      javaSource = rawJadxCode,
+      topLevelClassSimpleName = "C0012a",
+    )
+
+    assertTrue(compacted.isSmallClass)
+    assertTrue(compacted.compactCode.length < rawJadxCode.length)
+    assertTrue(compacted.compactCode.contains("import com.custom.SecretHelper;"))
+    assertTrue(!compacted.compactCode.contains("import java.util.List;"))
+    assertTrue(!compacted.compactCode.contains("JADX WARNING"))
+    assertTrue(compacted.compactCode.contains("\"auth_token\""))
+
+    val candidateNames = compacted.candidates.map { it.name }.toSet()
+    assertTrue(candidateNames.containsAll(setOf("C0012a", "f12a", "m3b", "a", "b")))
+    assertTrue(!candidateNames.contains("onCreate"))
+
+    val cleanCode = """
+      package com.example.clean;
+      public class UserProfile {
+          private String displayName = "Alice";
+          public String getDisplayName() { return displayName; }
+      }
+    """.trimIndent()
+    val cleanCompacted = com.example.engine.JavaSymbolRenamer.prepareCompactContextForAi(
+      javaSource = cleanCode,
+      topLevelClassSimpleName = "UserProfile",
+    )
+    assertTrue(cleanCompacted.candidates.isEmpty())
+  }
 }

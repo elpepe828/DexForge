@@ -156,13 +156,28 @@ data class DeobfuscationSuggestion(
   val selected: Boolean = true,
 )
 
+enum class DeobfuscationPhase {
+  PREPARING_CONTEXT,
+  CHECKING_APP_CHECK,
+  CONNECTING_MODEL,
+  THINKING,
+  STREAMING,
+  PARSING,
+}
+
 sealed interface DeobfuscationUiState {
   data object Idle : DeobfuscationUiState
   data class Loading(
     val elapsedSeconds: Int = 0,
     val streamedChars: Int = 0,
+    val chunkCount: Int = 0,
     val awaitingContinueDecision: Boolean = false,
     val useFastModel: Boolean = false,
+    val phase: DeobfuscationPhase = DeobfuscationPhase.PREPARING_CONTEXT,
+    val activeModelName: String = "gemini-3.8-flash",
+    val autoFastSelected: Boolean = false,
+    val candidateCount: Int = 0,
+    val isSlowInitialConnection: Boolean = false,
   ) : DeobfuscationUiState
   data class Ready(
     val summary: String,

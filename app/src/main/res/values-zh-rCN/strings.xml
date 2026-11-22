@@ -271,4 +271,14 @@
     <string name="deobf_btn_continue_waiting">继续尝试</string>
     <string name="deobf_btn_stop_and_close">关闭并停止</string>
     <string name="deobf_btn_try_fast_mode">尝试快速模式 (Flash-Lite)</string>
+    <string name="deobf_phase_preparing">正在扫描混淆符号并精简上下文…</string>
+    <string name="deobf_phase_app_check">正在验证网络与 Firebase App Check…</string>
+    <string name="deobf_phase_thinking">正在使用 %1$s 推理代码逻辑（%2$d 个数据包）…</string>
+    <string name="deobf_phase_parsing">正在校验建议的 Java 标识符…</string>
+    <string name="deobf_candidates_detected">检测到 %1$d 个混淆候选符号</string>
+    <string name="deobf_auto_fast_badge">自动快速模式（小型类）</string>
+    <string name="deobf_slow_initial_hint">初始响应耗时超出预期，可立即切换至 Flash-Lite 快速模式。</string>
+    <string name="deobf_error_offline">未检测到网络连接，请联网后重试。</string>
+    <string name="deobf_error_initial_stall">%2$d 秒内未收到 %1$s 的初始响应。请检查网络、App Check 状态或切换快速模式。</string>
+    <string name="deobf_error_app_check">Firebase App Check 验证失败: %1$s</string>
 </resources>

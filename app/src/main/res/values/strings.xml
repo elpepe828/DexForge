@@ -271,4 +271,14 @@
     <string name="deobf_btn_continue_waiting">Keep trying</string>
     <string name="deobf_btn_stop_and_close">Close &amp; stop</string>
     <string name="deobf_btn_try_fast_mode">Try fast mode (Flash-Lite)</string>
+    <string name="deobf_phase_preparing">Scanning obfuscated symbols &amp; compacting context…</string>
+    <string name="deobf_phase_app_check">Verifying network &amp; Firebase App Check…</string>
+    <string name="deobf_phase_thinking">Analyzing code logic with %1$s (%2$d packets)…</string>
+    <string name="deobf_phase_parsing">Validating suggested Java identifiers…</string>
+    <string name="deobf_candidates_detected">%1$d obfuscated candidate(s)</string>
+    <string name="deobf_auto_fast_badge">Auto fast mode (small class)</string>
+    <string name="deobf_slow_initial_hint">Initial response is taking longer than expected. You can switch to Flash-Lite now.</string>
+    <string name="deobf_error_offline">No internet connection detected. Connect to a network and try again.</string>
+    <string name="deobf_error_initial_stall">No initial response received from %1$s after %2$d s. Check your network, App Check status, or try fast mode.</string>
+    <string name="deobf_error_app_check">Firebase App Check verification failed: %1$s</string>
 </resources>
