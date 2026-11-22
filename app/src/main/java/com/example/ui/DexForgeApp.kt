@@ -205,7 +205,9 @@ private fun DexForgeAppBody(
       onSaveAndSign = { autoSign, overwriteOriginal, createBackup ->
         viewModel.saveAndSignPatchedTarget(autoSign, overwriteOriginal, createBackup)
       },
-      onAnalyzeObfuscated = viewModel::analyzeObfuscatedSymbols,
+      onAnalyzeObfuscated = { viewModel.analyzeObfuscatedSymbols(useFastModel = false) },
+      onAnalyzeObfuscatedFast = { viewModel.analyzeObfuscatedSymbols(useFastModel = true) },
+      onContinueDeobfWaiting = viewModel::continueDeobfuscationWaiting,
       onToggleDeobfSuggestion = viewModel::toggleDeobfuscationSuggestion,
       onSetAllDeobfSelected = viewModel::setAllDeobfuscationSuggestionsSelected,
       onApplyDeobfSuggestions = viewModel::applyDeobfuscationSuggestions,

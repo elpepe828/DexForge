@@ -115,6 +115,8 @@ fun JavaCodeEditorScreen(
   onCompileToDex: () -> Unit,
   onSaveAndSign: (autoSign: Boolean, overwriteOriginal: Boolean, createBackup: Boolean) -> Unit,
   onAnalyzeObfuscated: () -> Unit,
+  onAnalyzeObfuscatedFast: () -> Unit,
+  onContinueDeobfWaiting: () -> Unit,
   onToggleDeobfSuggestion: (Int) -> Unit,
   onSetAllDeobfSelected: (Boolean) -> Unit,
   onApplyDeobfSuggestions: () -> Unit,
@@ -557,10 +559,14 @@ fun JavaCodeEditorScreen(
         ContextDeobfuscationDialog(
           uiState = state.deobfuscationState,
           topLevelClassName = state.selectedClass?.simpleName,
+          onContinueWaiting = onContinueDeobfWaiting,
           onToggleSuggestion = onToggleDeobfSuggestion,
           onSetAllSelected = onSetAllDeobfSelected,
           onApply = onApplyDeobfSuggestions,
-          onRetry = onAnalyzeObfuscated,
+          onRetry = { useFast ->
+            if (useFast) onAnalyzeObfuscatedFast() else onAnalyzeObfuscated()
+          },
+          onRetryFast = onAnalyzeObfuscatedFast,
           onDismiss = onDismissDeobfDialog,
         )
       }
@@ -916,14 +922,20 @@ private fun ConfirmApplyAndSignDialog(
 private fun ContextDeobfuscationDialog(
   uiState: DeobfuscationUiState,
   topLevelClassName: String?,
+  onContinueWaiting: () -> Unit,
   onToggleSuggestion: (Int) -> Unit,
   onSetAllSelected: (Boolean) -> Unit,
   onApply: () -> Unit,
-  onRetry: () -> Unit,
+  onRetry: (useFastModel: Boolean) -> Unit,
+  onRetryFast: () -> Unit,
   onDismiss: () -> Unit,
 ) {
   AlertDialog(
-    onDismissRequest = onDismiss,
+    onDismissRequest = {
+      if (uiState !is DeobfuscationUiState.Loading) {
+        onDismiss()
+      }
+    },
     icon = {
       Icon(
         imageVector = Icons.Default.AutoFixHigh,
@@ -937,23 +949,85 @@ private fun ContextDeobfuscationDialog(
     text = {
       when (uiState) {
         DeobfuscationUiState.Idle -> Unit
-        DeobfuscationUiState.Loading -> {
-          Row(
+        is DeobfuscationUiState.Loading -> {
+          val mins = uiState.elapsedSeconds / 60
+          val secs = uiState.elapsedSeconds % 60
+          val elapsedText = "%02d:%02d".format(mins, secs)
+          val activeModelName = if (uiState.useFastModel) {
+            com.example.engine.AiDeobfuscationEngine.FAST_MODEL_NAME
+          } else {
+            com.example.engine.AiDeobfuscationEngine.PRIMARY_MODEL_NAME
+          }
+
+          Column(
             modifier = Modifier
               .fillMaxWidth()
-              .padding(vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+              .padding(vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
           ) {
-            CircularProgressIndicator(modifier = Modifier.size(28.dp))
-            Text(
-              text = stringResource(R.string.deobf_loading_body),
-              style = MaterialTheme.typography.bodyMedium,
-            )
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+              CircularProgressIndicator(modifier = Modifier.size(28.dp))
+              Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+              ) {
+                Text(
+                  text = stringResource(R.string.deobf_loading_body),
+                  style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                  text = stringResource(R.string.deobf_elapsed_label, elapsedText),
+                  style = MaterialTheme.typography.labelMedium,
+                  color = MaterialTheme.colorScheme.primary,
+                  fontWeight = FontWeight.SemiBold,
+                  modifier = Modifier.testTag("deobf_elapsed_text"),
+                )
+                Text(
+                  text = if (uiState.streamedChars > 0) {
+                    stringResource(R.string.deobf_streaming_progress, uiState.streamedChars)
+                  } else {
+                    stringResource(R.string.deobf_connecting_model, activeModelName)
+                  },
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+              }
+            }
+
+            if (uiState.awaitingContinueDecision) {
+              Surface(
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .testTag("deobf_checkin_card"),
+              ) {
+                Column(
+                  modifier = Modifier.padding(12.dp),
+                  verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                  Text(
+                    text = stringResource(R.string.deobf_checkin_title, elapsedText),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                  )
+                  Text(
+                    text = stringResource(R.string.deobf_checkin_body),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                  )
+                }
+              }
+            }
           }
         }
         is DeobfuscationUiState.Error -> {
-          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Surface(
               color = MaterialTheme.colorScheme.errorContainer,
               shape = MaterialTheme.shapes.small,
@@ -975,6 +1049,17 @@ private fun ContextDeobfuscationDialog(
                   style = MaterialTheme.typography.bodySmall,
                   color = MaterialTheme.colorScheme.onErrorContainer,
                 )
+              }
+            }
+            if (!uiState.usedFastModel) {
+              OutlinedButton(
+                onClick = onRetryFast,
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .heightIn(min = 48.dp)
+                  .testTag("deobf_retry_fast_btn"),
+              ) {
+                Text(stringResource(R.string.deobf_btn_try_fast_mode))
               }
             }
           }
@@ -1067,9 +1152,23 @@ private fun ContextDeobfuscationDialog(
     confirmButton = {
       when (uiState) {
         DeobfuscationUiState.Idle -> Unit
-        DeobfuscationUiState.Loading -> Unit
+        is DeobfuscationUiState.Loading -> {
+          if (uiState.awaitingContinueDecision) {
+            Button(
+              onClick = onContinueWaiting,
+              modifier = Modifier
+                .heightIn(min = 48.dp)
+                .testTag("deobf_continue_btn"),
+            ) {
+              Text(stringResource(R.string.deobf_btn_continue_waiting))
+            }
+          }
+        }
         is DeobfuscationUiState.Error -> {
-          Button(onClick = onRetry) {
+          Button(
+            onClick = { onRetry(uiState.usedFastModel) },
+            modifier = Modifier.heightIn(min = 48.dp),
+          ) {
             Text(stringResource(R.string.btn_retry))
           }
         }
@@ -1079,7 +1178,9 @@ private fun ContextDeobfuscationDialog(
             Button(
               onClick = onApply,
               enabled = selectedCount > 0,
-              modifier = Modifier.testTag("deobf_apply_btn"),
+              modifier = Modifier
+                .heightIn(min = 48.dp)
+                .testTag("deobf_apply_btn"),
             ) {
               Text(stringResource(R.string.btn_apply_renames, selectedCount))
             }
@@ -1088,8 +1189,21 @@ private fun ContextDeobfuscationDialog(
       }
     },
     dismissButton = {
-      TextButton(onClick = onDismiss) {
-        Text(stringResource(R.string.action_close))
+      TextButton(
+        onClick = onDismiss,
+        modifier = Modifier
+          .heightIn(min = 48.dp)
+          .testTag("deobf_stop_btn"),
+      ) {
+        Text(
+          stringResource(
+            if (uiState is DeobfuscationUiState.Loading) {
+              R.string.deobf_btn_stop_and_close
+            } else {
+              R.string.action_close
+            }
+          )
+        )
       }
     },
   )

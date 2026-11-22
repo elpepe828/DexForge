@@ -260,7 +260,15 @@
     <string name="deobf_top_class_warning">Nom de classe principal (décoché par défaut pour préserver les références DEX externes)</string>
     <string name="btn_apply_renames">Appliquer (%1$d)</string>
     <string name="btn_retry">Réessayer</string>
-    <string name="deobf_error_timeout">L’analyse a expiré après 60 secondes. Vérifiez votre connexion et réessayez.</string>
+    <string name="deobf_error_timeout">La requête a dépassé le délai maximal d’attente. Vérifiez votre connexion ou essayez le mode rapide.</string>
     <string name="deobf_error_generic">Impossible d’analyser les noms obfusqués.</string>
     <string name="msg_deobf_applied">%1$d renommages contextuels appliqués (annulables ou prêts à compiler en DEX)</string>
+    <string name="deobf_elapsed_label">Temps écoulé : %1$s</string>
+    <string name="deobf_connecting_model">Connexion à %1$s…</string>
+    <string name="deobf_streaming_progress">Réception des suggestions (%1$d caractères)…</string>
+    <string name="deobf_checkin_title">Désobfuscation en cours (%1$s)</string>
+    <string name="deobf_checkin_body">Le processus se poursuit en arrière-plan sans pause ni redémarrage. Voulez-vous continuer d’essayer ou fermer et arrêter ?</string>
+    <string name="deobf_btn_continue_waiting">Continuer</string>
+    <string name="deobf_btn_stop_and_close">Fermer et arrêter</string>
+    <string name="deobf_btn_try_fast_mode">Essayer le mode rapide (Flash-Lite)</string>
 </resources>

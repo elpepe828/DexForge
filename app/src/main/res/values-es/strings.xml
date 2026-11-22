@@ -260,7 +260,15 @@
     <string name="deobf_top_class_warning">Nombre de clase principal (desmarcado por defecto para mantener referencias externas en el DEX)</string>
     <string name="btn_apply_renames">Aplicar (%1$d)</string>
     <string name="btn_retry">Reintentar</string>
-    <string name="deobf_error_timeout">El análisis superó los 60 segundos. Revisa tu conexión e inténtalo de nuevo.</string>
+    <string name="deobf_error_timeout">La solicitud superó el tiempo máximo de espera. Revisa tu conexión o prueba el modo rápido.</string>
     <string name="deobf_error_generic">No se pudieron analizar los nombres ofuscados.</string>
     <string name="msg_deobf_applied">Se aplicaron %1$d renombrados por contexto (puedes deshacer o compilar a DEX)</string>
+    <string name="deobf_elapsed_label">Tiempo transcurrido: %1$s</string>
+    <string name="deobf_connecting_model">Conectando con %1$s…</string>
+    <string name="deobf_streaming_progress">Recibiendo sugerencias (%1$d caracteres)…</string>
+    <string name="deobf_checkin_title">Sigue desofuscando (%1$s)</string>
+    <string name="deobf_checkin_body">El proceso continúa ejecutándose sin pausarse ni reiniciarse. ¿Quieres seguir intentando o cerrar y dejar de desofuscar?</string>
+    <string name="deobf_btn_continue_waiting">Seguir intentando</string>
+    <string name="deobf_btn_stop_and_close">Cerrar y detener</string>
+    <string name="deobf_btn_try_fast_mode">Probar modo rápido (Flash-Lite)</string>
 </resources>

@@ -158,12 +158,20 @@ data class DeobfuscationSuggestion(
 
 sealed interface DeobfuscationUiState {
   data object Idle : DeobfuscationUiState
-  data object Loading : DeobfuscationUiState
+  data class Loading(
+    val elapsedSeconds: Int = 0,
+    val streamedChars: Int = 0,
+    val awaitingContinueDecision: Boolean = false,
+    val useFastModel: Boolean = false,
+  ) : DeobfuscationUiState
   data class Ready(
     val summary: String,
     val suggestions: List<DeobfuscationSuggestion>,
   ) : DeobfuscationUiState
-  data class Error(val message: String) : DeobfuscationUiState
+  data class Error(
+    val message: String,
+    val usedFastModel: Boolean = false,
+  ) : DeobfuscationUiState
 }
 
 data class DexEditorState(

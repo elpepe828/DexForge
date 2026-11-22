@@ -1,15 +1,24 @@
 package com.example.engine
 
+import android.util.Log
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
+import com.google.firebase.ai.type.RequestOptions
 import com.google.firebase.ai.type.Schema
+import com.google.firebase.ai.type.ThinkingLevel
 import com.google.firebase.ai.type.generationConfig
-import kotlinx.coroutines.withTimeout
+import com.google.firebase.ai.type.thinkingConfig
+import kotlinx.coroutines.CancellationException
 
 object AiDeobfuscationEngine {
 
+  private const val TAG = "AiDeobfuscationEngine"
   private const val MAX_CODE_CHARS = 24_000
-  private const val INFERENCE_TIMEOUT_MS = 60_000L
+  // 10 minutes HTTP/socket ceiling so user-approved 90s continuation cycles never abort mid-flight.
+  private const val REQUEST_TIMEOUT_MS = 600_000L
+
+  const val PRIMARY_MODEL_NAME = "gemini-3.8-flash"
+  const val FAST_MODEL_NAME = "gemini-3.5-flash-lite"
 
   private val renamesSchema = Schema.obj(
     properties = mapOf(
@@ -39,13 +48,32 @@ object AiDeobfuscationEngine {
     )
   )
 
-  private val model by lazy {
+  private val standardModel by lazy {
     Firebase.ai.generativeModel(
-      modelName = "gemini-3.8-flash",
+      modelName = PRIMARY_MODEL_NAME,
       generationConfig = generationConfig {
+        temperature = 0.2f
+        maxOutputTokens = 4096
+        responseMimeType = "application/json"
+        responseSchema = renamesSchema
+        thinkingConfig = thinkingConfig {
+          thinkingLevel = ThinkingLevel.LOW
+        }
+      },
+      requestOptions = RequestOptions(REQUEST_TIMEOUT_MS),
+    )
+  }
+
+  private val fastModel by lazy {
+    Firebase.ai.generativeModel(
+      modelName = FAST_MODEL_NAME,
+      generationConfig = generationConfig {
+        temperature = 0.2f
+        maxOutputTokens = 4096
         responseMimeType = "application/json"
         responseSchema = renamesSchema
       },
+      requestOptions = RequestOptions(REQUEST_TIMEOUT_MS),
     )
   }
 
@@ -54,6 +82,8 @@ object AiDeobfuscationEngine {
     simpleClassName: String,
     javaSource: String,
     languageTag: String,
+    useFastModel: Boolean = false,
+    onProgress: (streamedChars: Int) -> Unit = {},
   ): DeobfuscationPlan {
     val truncatedSource = if (javaSource.length > MAX_CODE_CHARS) {
       javaSource.take(MAX_CODE_CHARS) + "\n// ... [code truncated for analysis]"
@@ -78,7 +108,7 @@ object AiDeobfuscationEngine {
       appendLine("1. Write 'summary' and each 'reason' in $explanationLanguage.")
       appendLine("2. Every 'suggestedName' MUST be a valid Java identifier in English (camelCase for methods/fields/parameters/variables, PascalCase for classes, UPPER_SNAKE_CASE for static final constants) and MUST NOT be a Java keyword.")
       appendLine("3. NEVER rename Android SDK or Java standard library methods/classes/overrides (e.g. onCreate, onClick, toString, equals, hashCode, run, length, size, getString, findViewById).")
-      appendLine("4. Only include identifiers that are genuinely obfuscated or generic/auto-generated and actually appear in the code.")
+      appendLine("4. Only include identifiers that are genuinely obfuscated or generic/auto-generated and actually appear in the code (up to 40 highest-impact symbols).")
       appendLine("5. Do NOT suggest duplicate 'suggestedName' values.")
       appendLine()
       appendLine("Class: $fullClassName")
@@ -87,12 +117,31 @@ object AiDeobfuscationEngine {
       appendLine("```")
     }
 
-    val response = withTimeout(INFERENCE_TIMEOUT_MS) {
-      model.generateContent(prompt)
+    val activeModel = if (useFastModel) fastModel else standardModel
+    val accumulated = StringBuilder()
+    onProgress(0)
+
+    try {
+      activeModel.generateContentStream(prompt).collect { chunk ->
+        val chunkText = chunk.text.orEmpty()
+        if (chunkText.isNotEmpty()) {
+          accumulated.append(chunkText)
+          onProgress(accumulated.length)
+        }
+      }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      Log.e(
+        TAG,
+        "Deobfuscation stream failed (fast=$useFastModel, streamedChars=${accumulated.length})",
+        e,
+      )
+      throw e
     }
 
-    val rawJson = response.text?.trim()
-      ?.takeIf { it.isNotEmpty() }
+    val rawJson = accumulated.toString().trim()
+      .takeIf { it.isNotEmpty() }
       ?: throw IllegalStateException("Empty AI response.")
 
     return JavaSymbolRenamer.parseDeobfuscationJson(
@@ -100,5 +149,16 @@ object AiDeobfuscationEngine {
       javaSource = javaSource,
       topLevelClassSimpleName = simpleClassName,
     )
+  }
+
+  fun formatErrorMessage(error: Throwable, fallback: String): String {
+    val msg = error.localizedMessage?.trim().orEmpty()
+    val causeMsg = error.cause?.localizedMessage?.trim().orEmpty()
+    return when {
+      msg.isNotEmpty() && causeMsg.isNotEmpty() && !msg.contains(causeMsg) -> "$msg ($causeMsg)"
+      msg.isNotEmpty() -> msg
+      causeMsg.isNotEmpty() -> causeMsg
+      else -> "${error::class.java.simpleName}: $fallback"
+    }
   }
 }

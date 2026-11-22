@@ -12,6 +12,7 @@ import com.example.data.WorkspaceRepository
 import com.example.engine.AiDeobfuscationEngine
 import com.example.engine.ApkArchiveEngine
 import com.example.engine.AxmlDecoder
+import com.example.engine.DeobfuscationPlan
 import com.example.engine.JavaDecompilerEngine
 import com.example.engine.JavaDecompilerSession
 import com.example.engine.JavaSymbolRenamer
@@ -29,18 +30,22 @@ import com.example.model.PaneState
 import com.example.model.SignatureReport
 import com.example.util.LocaleManager
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 enum class MainNavDestination {
   DUAL_FILES,
@@ -93,6 +98,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
   private val modifiedDexEntries = ConcurrentHashMap.newKeySet<String>()
   private var siblingDexExtractionJob: Job? = null
   private var deobfuscationJob: Job? = null
+  private var deobfuscationTickerJob: Job? = null
+  private val nextDeobfuscationPromptAtSeconds = AtomicInteger(DEFAULT_DEOBFUSCATION_CHECK_IN_SECONDS)
+
+  internal var deobfuscationCheckInIntervalSeconds: Int = DEFAULT_DEOBFUSCATION_CHECK_IN_SECONDS
+  internal var deobfuscationIoDispatcher: CoroutineDispatcher = Dispatchers.IO
+  internal var deobfuscationAnalyzer: suspend (
+    fullClassName: String,
+    simpleClassName: String,
+    javaSource: String,
+    languageTag: String,
+    useFastModel: Boolean,
+    onProgress: (Int) -> Unit,
+  ) -> DeobfuscationPlan = { full, simple, code, lang, fast, onProgress ->
+    AiDeobfuscationEngine.analyzeClassForDeobfuscation(
+      fullClassName = full,
+      simpleClassName = simple,
+      javaSource = code,
+      languageTag = lang,
+      useFastModel = fast,
+      onProgress = onProgress,
+    )
+  }
+
+  companion object {
+    const val DEFAULT_DEOBFUSCATION_CHECK_IN_SECONDS = 90
+  }
 
   init {
     viewModelScope.launch(Dispatchers.IO) {
@@ -905,6 +936,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
   fun selectDexClass(cls: DexClassInfo) {
     val session = activeDecompilerSession ?: return
     val alreadyCached = session.isClassCached(cls.fullName)
+    deobfuscationTickerJob?.cancel()
+    deobfuscationTickerJob = null
     deobfuscationJob?.cancel()
     deobfuscationJob = null
     viewModelScope.launch(Dispatchers.IO) {
@@ -1022,29 +1055,91 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
-  fun analyzeObfuscatedSymbols() {
+  fun analyzeObfuscatedSymbols(useFastModel: Boolean = false) {
     val ed = _uiState.value.dexEditor ?: return
     val cls = ed.selectedClass ?: return
     if (ed.javaCode.isBlank() || ed.decompilerMode != DecompilerMode.JAVA) return
 
+    deobfuscationTickerJob?.cancel()
     deobfuscationJob?.cancel()
-    deobfuscationJob = viewModelScope.launch(Dispatchers.IO) {
-      _uiState.update { state ->
-        val curr = state.dexEditor ?: return@update state
-        if (curr.selectedClass?.fullName != cls.fullName) return@update state
-        state.copy(dexEditor = curr.copy(deobfuscationState = DeobfuscationUiState.Loading))
-      }
 
+    val intervalSeconds = deobfuscationCheckInIntervalSeconds.coerceAtLeast(1)
+    nextDeobfuscationPromptAtSeconds.set(intervalSeconds)
+
+    _uiState.update { state ->
+      val curr = state.dexEditor ?: return@update state
+      if (curr.selectedClass?.fullName != cls.fullName) return@update state
+      state.copy(
+        dexEditor = curr.copy(
+          deobfuscationState = DeobfuscationUiState.Loading(
+            elapsedSeconds = 0,
+            streamedChars = 0,
+            awaitingContinueDecision = false,
+            useFastModel = useFastModel,
+          )
+        )
+      )
+    }
+
+    val tickerJob = viewModelScope.launch {
+      while (isActive) {
+        delay(1_000L)
+        var shouldStop = false
+        _uiState.update { state ->
+          val curr = state.dexEditor ?: run {
+            shouldStop = true
+            return@update state
+          }
+          if (curr.selectedClass?.fullName != cls.fullName) {
+            shouldStop = true
+            return@update state
+          }
+          val loading = curr.deobfuscationState as? DeobfuscationUiState.Loading ?: run {
+            shouldStop = true
+            return@update state
+          }
+          val nextElapsed = loading.elapsedSeconds + 1
+          val reachedPrompt = !loading.awaitingContinueDecision &&
+            nextElapsed >= nextDeobfuscationPromptAtSeconds.get()
+          state.copy(
+            dexEditor = curr.copy(
+              deobfuscationState = loading.copy(
+                elapsedSeconds = nextElapsed,
+                awaitingContinueDecision = loading.awaitingContinueDecision || reachedPrompt,
+              )
+            )
+          )
+        }
+        if (shouldStop) break
+      }
+    }
+    deobfuscationTickerJob = tickerJob
+
+    deobfuscationJob = viewModelScope.launch(deobfuscationIoDispatcher) {
       try {
         val langTag = _uiState.value.appLanguageTag.ifBlank {
           java.util.Locale.getDefault().toLanguageTag()
         }
-        val plan = AiDeobfuscationEngine.analyzeClassForDeobfuscation(
-          fullClassName = cls.fullName,
-          simpleClassName = cls.simpleName,
-          javaSource = ed.javaCode,
-          languageTag = langTag,
-        )
+        val plan = deobfuscationAnalyzer(
+          cls.fullName,
+          cls.simpleName,
+          ed.javaCode,
+          langTag,
+          useFastModel,
+        ) { streamedChars ->
+          _uiState.update { state ->
+            val curr = state.dexEditor ?: return@update state
+            if (curr.selectedClass?.fullName != cls.fullName) return@update state
+            val loading = curr.deobfuscationState as? DeobfuscationUiState.Loading ?: return@update state
+            if (loading.streamedChars == streamedChars) return@update state
+            state.copy(
+              dexEditor = curr.copy(
+                deobfuscationState = loading.copy(streamedChars = streamedChars)
+              )
+            )
+          }
+        }
+        tickerJob.cancel()
         _uiState.update { state ->
           val curr = state.dexEditor ?: return@update state
           if (curr.selectedClass?.fullName != cls.fullName) return@update state
@@ -1058,32 +1153,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
           )
         }
       } catch (e: TimeoutCancellationException) {
+        tickerJob.cancel()
         Log.e("MainViewModel", "Deobfuscation analysis timed out", e)
         _uiState.update { state ->
           val curr = state.dexEditor ?: return@update state
           if (curr.selectedClass?.fullName != cls.fullName) return@update state
           state.copy(
             dexEditor = curr.copy(
-              deobfuscationState = DeobfuscationUiState.Error(str(R.string.deobf_error_timeout))
+              deobfuscationState = DeobfuscationUiState.Error(
+                message = str(R.string.deobf_error_timeout),
+                usedFastModel = useFastModel,
+              )
             )
           )
         }
       } catch (e: CancellationException) {
+        tickerJob.cancel()
         throw e
       } catch (e: Exception) {
+        tickerJob.cancel()
         Log.e("MainViewModel", "Deobfuscation analysis failed", e)
+        val msg = AiDeobfuscationEngine.formatErrorMessage(e, str(R.string.deobf_error_generic))
         _uiState.update { state ->
           val curr = state.dexEditor ?: return@update state
           if (curr.selectedClass?.fullName != cls.fullName) return@update state
           state.copy(
             dexEditor = curr.copy(
               deobfuscationState = DeobfuscationUiState.Error(
-                e.localizedMessage ?: str(R.string.deobf_error_generic)
+                message = msg,
+                usedFastModel = useFastModel,
               )
             )
           )
         }
       }
+    }
+  }
+
+  fun continueDeobfuscationWaiting() {
+    val intervalSeconds = deobfuscationCheckInIntervalSeconds.coerceAtLeast(1)
+    _uiState.update { state ->
+      val curr = state.dexEditor ?: return@update state
+      val loading = curr.deobfuscationState as? DeobfuscationUiState.Loading ?: return@update state
+      nextDeobfuscationPromptAtSeconds.set(loading.elapsedSeconds + intervalSeconds)
+      state.copy(
+        dexEditor = curr.copy(
+          deobfuscationState = loading.copy(awaitingContinueDecision = false)
+        )
+      )
     }
   }
 
@@ -1142,6 +1259,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun dismissDeobfuscationDialog() {
+    deobfuscationTickerJob?.cancel()
+    deobfuscationTickerJob = null
     deobfuscationJob?.cancel()
     deobfuscationJob = null
     _uiState.update { state ->
@@ -1392,6 +1511,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   private fun closeDexEditorInternal() {
+    deobfuscationTickerJob?.cancel()
+    deobfuscationTickerJob = null
     deobfuscationJob?.cancel()
     deobfuscationJob = null
     siblingDexExtractionJob?.cancel()
@@ -1567,6 +1688,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val state = _uiState.value
     return state.keystoreProfiles.firstOrNull { it.id == state.selectedKeystoreId }
       ?: state.keystoreProfiles.firstOrNull()
+  }
+
+  @androidx.annotation.VisibleForTesting
+  internal fun seedDexEditorForTest(state: DexEditorState) {
+    _uiState.update { it.copy(dexEditor = state) }
   }
 
   private fun updatePane(paneId: Int, transform: (PaneState) -> PaneState) {

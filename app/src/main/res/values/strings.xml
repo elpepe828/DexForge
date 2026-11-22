@@ -260,7 +260,15 @@
     <string name="deobf_top_class_warning">Top-level class name (unchecked by default to keep external DEX references intact)</string>
     <string name="btn_apply_renames">Apply (%1$d)</string>
     <string name="btn_retry">Retry</string>
-    <string name="deobf_error_timeout">Analysis timed out after 60 seconds. Check your connection and try again.</string>
+    <string name="deobf_error_timeout">The AI request timed out. Check your internet connection or try fast mode.</string>
     <string name="deobf_error_generic">Could not analyze obfuscated names.</string>
     <string name="msg_deobf_applied">Applied %1$d contextual renames (you can undo or compile to DEX)</string>
+    <string name="deobf_elapsed_label">Elapsed: %1$s</string>
+    <string name="deobf_connecting_model">Connecting to %1$s…</string>
+    <string name="deobf_streaming_progress">Receiving suggestions (%1$d chars)…</string>
+    <string name="deobf_checkin_title">Still deobfuscating (%1$s elapsed)</string>
+    <string name="deobf_checkin_body">Analysis is still running in the background without pausing. Do you want to keep trying or close and stop deobfuscating?</string>
+    <string name="deobf_btn_continue_waiting">Keep trying</string>
+    <string name="deobf_btn_stop_and_close">Close &amp; stop</string>
+    <string name="deobf_btn_try_fast_mode">Try fast mode (Flash-Lite)</string>
 </resources>
