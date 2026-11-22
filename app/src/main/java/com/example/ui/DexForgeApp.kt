@@ -196,6 +196,7 @@ private fun DexForgeAppBody(
       onDiscardAndReturnToBrowser = viewModel::discardEditsAndReturnToClassBrowser,
       onSwitchDexEntry = viewModel::switchActiveDexEntry,
       onSearchQueryChange = viewModel::setDexSearchQuery,
+      onSearchScopeChange = viewModel::setDexSearchScope,
       onModeChange = viewModel::setDecompilerMode,
       onCodeChange = viewModel::updateJavaEditorCode,
       onUndo = viewModel::undoJavaEdit,
@@ -204,6 +205,11 @@ private fun DexForgeAppBody(
       onSaveAndSign = { autoSign, overwriteOriginal, createBackup ->
         viewModel.saveAndSignPatchedTarget(autoSign, overwriteOriginal, createBackup)
       },
+      onAnalyzeObfuscated = viewModel::analyzeObfuscatedSymbols,
+      onToggleDeobfSuggestion = viewModel::toggleDeobfuscationSuggestion,
+      onSetAllDeobfSelected = viewModel::setAllDeobfuscationSuggestionsSelected,
+      onApplyDeobfSuggestions = viewModel::applyDeobfuscationSuggestions,
+      onDismissDeobfDialog = viewModel::dismissDeobfuscationDialog,
       onExportSavedFile = viewModel::requestExportToDevice,
       onShareSavedFile = shareFile,
       onDismissSavedBanner = viewModel::clearSavedApkBanner,

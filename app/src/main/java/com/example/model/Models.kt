@@ -63,7 +63,14 @@ data class DexClassInfo(
   val fieldCount: Int,
   val isInterface: Boolean,
   val isEnum: Boolean,
+  val methodNames: List<String> = emptyList(),
 )
+
+enum class DexSearchScope {
+  ALL,
+  CLASSES,
+  METHODS,
+}
 
 data class DexPackageNode(
   val packageName: String,
@@ -134,6 +141,31 @@ data class KeystoreProfile(
   val isBuiltIn: Boolean = false,
 )
 
+enum class DeobfuscationSymbolKind {
+  CLASS,
+  FIELD,
+  METHOD,
+  PARAM_OR_VAR,
+}
+
+data class DeobfuscationSuggestion(
+  val originalName: String,
+  val suggestedName: String,
+  val kind: DeobfuscationSymbolKind,
+  val reason: String,
+  val selected: Boolean = true,
+)
+
+sealed interface DeobfuscationUiState {
+  data object Idle : DeobfuscationUiState
+  data object Loading : DeobfuscationUiState
+  data class Ready(
+    val summary: String,
+    val suggestions: List<DeobfuscationSuggestion>,
+  ) : DeobfuscationUiState
+  data class Error(val message: String) : DeobfuscationUiState
+}
+
 data class DexEditorState(
   val targetFilePath: String,
   val targetApkPath: String?,
@@ -145,6 +177,7 @@ data class DexEditorState(
   val showClassBrowser: Boolean = true,
   val patchedClassNames: Set<String> = emptySet(),
   val searchQuery: String = "",
+  val searchScope: DexSearchScope = DexSearchScope.ALL,
   val selectedClass: DexClassInfo? = null,
   val decompilerMode: DecompilerMode = DecompilerMode.JAVA,
   val javaCode: String = "",
@@ -159,4 +192,5 @@ data class DexEditorState(
   val lastCompileResult: CompilePatchResult? = null,
   val hasUncommittedDexChanges: Boolean = false,
   val lastSavedApkPath: String? = null,
+  val deobfuscationState: DeobfuscationUiState = DeobfuscationUiState.Idle,
 )

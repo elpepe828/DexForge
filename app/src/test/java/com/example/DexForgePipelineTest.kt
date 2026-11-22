@@ -55,7 +55,13 @@ class DexForgePipelineTest {
       ApkArchiveEngine.extractArchiveEntry(sampleApk, "classes.dex", extractedDex)
       val javaSource = JavaDecompilerEngine.openDexSession(root, extractedDex, "classes.dex").use { session ->
         val classes = session.listClasses()
-        assertTrue(classes.any { it.fullName == "com.dexforge.demo.LicenseCalculator" })
+        val calcClass = classes.firstOrNull { it.fullName == "com.dexforge.demo.LicenseCalculator" }
+        assertTrue(calcClass != null)
+        assertTrue(
+          "Expected indexed methodNames to contain isFeatureUnlocked, got ${calcClass?.methodNames}",
+          calcClass?.methodNames?.contains("isFeatureUnlocked") == true,
+        )
+        assertTrue(calcClass?.methodNames?.none { it == "<init>" || it == "<clinit>" } == true)
         session.decompileClassToJava("com.dexforge.demo.LicenseCalculator")
       }
       assertTrue(javaSource.contains("isFeatureUnlocked"))
@@ -219,5 +225,174 @@ class DexForgePipelineTest {
     val appLevel = com.example.ui.components.buildDexFolderListing(classes, "com.example.app", patched)
     assertTrue(appLevel.folders.isEmpty())
     assertEquals(listOf("BuildConfig", "MainActivity"), appLevel.classes.map { it.simpleName })
+  }
+
+  @Test
+  fun searchDexClasses_supportsAllClassesMethodsAndFuzzySimilarity() {
+    val classes = listOf(
+      com.example.model.DexClassInfo(
+        fullName = "com.app.BillingManager",
+        packageName = "com.app",
+        simpleName = "BillingManager",
+        dexEntryName = "classes.dex",
+        methodCount = 3,
+        fieldCount = 1,
+        isInterface = false,
+        isEnum = false,
+        methodNames = listOf("checkLicense", "checkPremiumStatus", "refreshPurchase"),
+      ),
+      com.example.model.DexClassInfo(
+        fullName = "com.app.AuthService",
+        packageName = "com.app",
+        simpleName = "AuthService",
+        dexEntryName = "classes.dex",
+        methodCount = 2,
+        fieldCount = 0,
+        isInterface = false,
+        isEnum = false,
+        methodNames = listOf("loginUser", "validateLicenseToken"),
+      ),
+      com.example.model.DexClassInfo(
+        fullName = "com.app.LicenseCheckActivity",
+        packageName = "com.app",
+        simpleName = "LicenseCheckActivity",
+        dexEntryName = "classes.dex",
+        methodCount = 1,
+        fieldCount = 0,
+        isInterface = false,
+        isEnum = false,
+        methodNames = listOf("onCreate"),
+      ),
+    )
+
+    // 1. ALL scope finds both class-name match and method-name matches
+    val allResults = com.example.ui.components.searchDexClasses(
+      classes,
+      "License",
+      com.example.model.DexSearchScope.ALL,
+    )
+    assertEquals(
+      setOf("BillingManager", "AuthService", "LicenseCheckActivity"),
+      allResults.map { it.cls.simpleName }.toSet(),
+    )
+    val billingAll = allResults.first { it.cls.simpleName == "BillingManager" }
+    assertEquals(false, billingAll.matchedClass)
+    assertEquals(listOf("checkLicense"), billingAll.matchedMethods)
+
+    // 2. CLASSES scope excludes method-only hits
+    val classOnly = com.example.ui.components.searchDexClasses(
+      classes,
+      "License",
+      com.example.model.DexSearchScope.CLASSES,
+    )
+    assertEquals(listOf("LicenseCheckActivity"), classOnly.map { it.cls.simpleName })
+    assertTrue(classOnly.first().matchedClass)
+    assertTrue(classOnly.first().matchedMethods.isEmpty())
+
+    // 3. METHODS scope excludes class-only hits and ranks exact match first
+    val methodOnly = com.example.ui.components.searchDexClasses(
+      classes,
+      "checkLicense",
+      com.example.model.DexSearchScope.METHODS,
+    )
+    assertEquals(listOf("BillingManager"), methodOnly.map { it.cls.simpleName })
+    assertEquals(false, methodOnly.first().matchedClass)
+    assertEquals(listOf("checkLicense"), methodOnly.first().matchedMethods)
+
+    // 4. Fuzzy / similar method name search (e.g. slight typo "chckLicens" -> "checkLicense")
+    val fuzzyMethod = com.example.ui.components.searchDexClasses(
+      classes,
+      "chckLicens",
+      com.example.model.DexSearchScope.METHODS,
+    )
+    assertEquals(listOf("BillingManager"), fuzzyMethod.map { it.cls.simpleName })
+    assertEquals(listOf("checkLicense"), fuzzyMethod.first().matchedMethods)
+
+    // 5. Fuzzy / similar class name search (e.g. "BilingManagr" -> "BillingManager")
+    val fuzzyClass = com.example.ui.components.searchDexClasses(
+      classes,
+      "BilingManagr",
+      com.example.model.DexSearchScope.CLASSES,
+    )
+    assertEquals(listOf("BillingManager"), fuzzyClass.map { it.cls.simpleName })
+  }
+
+  @Test
+  fun javaSymbolRenamer_parsesStructuredJsonAndSafelyRenamesObfuscatedCode() {
+    val obfuscatedJava = """
+      package p000a.b;
+
+      import java.util.List;
+
+      // Keep comment a f12a m3b untouched
+      public class C0012a {
+          private String f12a = "f12a";
+
+          public boolean m3b(String a, List<String> b) {
+              String str = this.f12a + "a";
+              if (a == null || b.isEmpty()) {
+                  return false;
+              }
+              return a.equals(str) && other.a(b);
+          }
+
+          public boolean onCreate() {
+              return m3b("ok", java.util.Collections.emptyList());
+          }
+      }
+    """.trimIndent()
+
+    val aiJson = """
+      {
+        "summary": "Validates an input token against a stored key.",
+        "renames": [
+          {"originalName": "C0012a", "suggestedName": "TokenValidator", "kind": "CLASS", "reason": "Class role"},
+          {"originalName": "f12a", "suggestedName": "expectedToken", "kind": "FIELD", "reason": "Compared against input"},
+          {"originalName": "m3b", "suggestedName": "verifyToken", "kind": "METHOD", "reason": "Returns boolean check"},
+          {"originalName": "a", "suggestedName": "inputToken", "kind": "PARAM_OR_VAR", "reason": "Checked for null and equality"},
+          {"originalName": "b", "suggestedName": "allowedList", "kind": "PARAM_OR_VAR", "reason": "Checked with isEmpty()"},
+          {"originalName": "str", "suggestedName": "expectedToken", "kind": "PARAM_OR_VAR", "reason": "Collision test"},
+          {"originalName": "onCreate", "suggestedName": "initScreen", "kind": "METHOD", "reason": "Protected override"},
+          {"originalName": "nonExistent", "suggestedName": "ignored", "kind": "FIELD", "reason": "Not in code"}
+        ]
+      }
+    """.trimIndent()
+
+    val plan = com.example.engine.JavaSymbolRenamer.parseDeobfuscationJson(
+      rawJson = aiJson,
+      javaSource = obfuscatedJava,
+      topLevelClassSimpleName = "C0012a",
+    )
+
+    assertEquals("Validates an input token against a stored key.", plan.summary)
+    // Protected override 'onCreate' and missing 'nonExistent' must be filtered out.
+    assertTrue(plan.suggestions.none { it.originalName == "onCreate" || it.originalName == "nonExistent" })
+
+    // Top-level class rename is unchecked by default so DEX references stay safe.
+    val classSug = plan.suggestions.first { it.originalName == "C0012a" }
+    assertEquals(false, classSug.selected)
+
+    // Collision on 'expectedToken' should auto-disambiguate for 'str'.
+    val strSug = plan.suggestions.first { it.originalName == "str" }
+    assertEquals("expectedToken2", strSug.suggestedName)
+
+    val renamed = com.example.engine.JavaSymbolRenamer.applyRenames(
+      javaSource = obfuscatedJava,
+      suggestions = plan.suggestions,
+      enclosingClassSimpleName = "C0012a",
+    )
+
+    // Package, imports, comments, strings, top-level class name, and external receiver `other.a(...)` stay intact
+    assertTrue(renamed.contains("package p000a.b;"))
+    assertTrue(renamed.contains("// Keep comment a f12a m3b untouched"))
+    assertTrue(renamed.contains("public class C0012a"))
+    assertTrue(renamed.contains("= \"f12a\";"))
+    assertTrue(renamed.contains("+ \"a\";"))
+    assertTrue(renamed.contains("other.a(allowedList)"))
+    // Obfuscated symbols are renamed safely everywhere they belong
+    assertTrue(renamed.contains("private String expectedToken = \"f12a\";"))
+    assertTrue(renamed.contains("public boolean verifyToken(String inputToken, List<String> allowedList)"))
+    assertTrue(renamed.contains("String expectedToken2 = this.expectedToken + \"a\";"))
+    assertTrue(renamed.contains("return verifyToken(\"ok\""))
   }
 }

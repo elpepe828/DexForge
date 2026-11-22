@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -48,6 +49,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -83,8 +85,12 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.model.CompilePatchResult
 import com.example.model.DecompilerMode
+import com.example.model.DeobfuscationSuggestion
+import com.example.model.DeobfuscationSymbolKind
+import com.example.model.DeobfuscationUiState
 import com.example.model.DexClassInfo
 import com.example.model.DexEditorState
+import com.example.model.DexSearchScope
 import com.example.ui.theme.JetBrainsMonoFamily
 import com.example.ui.theme.SyntaxColors
 
@@ -101,12 +107,18 @@ fun JavaCodeEditorScreen(
   onDiscardAndReturnToBrowser: () -> Unit,
   onSwitchDexEntry: (String) -> Unit,
   onSearchQueryChange: (String) -> Unit,
+  onSearchScopeChange: (DexSearchScope) -> Unit,
   onModeChange: (DecompilerMode) -> Unit,
   onCodeChange: (String) -> Unit,
   onUndo: () -> Unit,
   onRedo: () -> Unit,
   onCompileToDex: () -> Unit,
   onSaveAndSign: (autoSign: Boolean, overwriteOriginal: Boolean, createBackup: Boolean) -> Unit,
+  onAnalyzeObfuscated: () -> Unit,
+  onToggleDeobfSuggestion: (Int) -> Unit,
+  onSetAllDeobfSelected: (Boolean) -> Unit,
+  onApplyDeobfSuggestions: () -> Unit,
+  onDismissDeobfDialog: () -> Unit,
   onExportSavedFile: (java.io.File) -> Unit,
   onShareSavedFile: (java.io.File) -> Unit,
   onDismissSavedBanner: () -> Unit,
@@ -146,6 +158,7 @@ fun JavaCodeEditorScreen(
             onNavigateUpFolder = onNavigateUpFolder,
             onSwitchDexEntry = onSwitchDexEntry,
             onSearchQueryChange = onSearchQueryChange,
+            onSearchScopeChange = onSearchScopeChange,
             onReturnToOpenClass = onReturnToCodeEditor,
             onRequestSaveAndSign = { showConfirmSaveDialog = true },
             onCloseEditor = onClose,
@@ -265,6 +278,25 @@ fun JavaCodeEditorScreen(
                   modifier = Modifier.height(36.dp).testTag("mode_bytecode_chip"),
                 )
 
+                FilledTonalButton(
+                  onClick = onAnalyzeObfuscated,
+                  enabled = !state.isDecompiling &&
+                    !state.isCompiling &&
+                    state.selectedClass != null &&
+                    state.decompilerMode == DecompilerMode.JAVA &&
+                    state.deobfuscationState !is DeobfuscationUiState.Loading,
+                  modifier = Modifier.height(36.dp).testTag("deobfuscate_ai_btn"),
+                  contentPadding = PaddingValues(horizontal = 12.dp),
+                ) {
+                  if (state.deobfuscationState is DeobfuscationUiState.Loading) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                  } else {
+                    Icon(Icons.Default.AutoFixHigh, contentDescription = null, modifier = Modifier.size(16.dp))
+                  }
+                  Spacer(Modifier.width(6.dp))
+                  Text(stringResource(R.string.btn_deobfuscate_ai), style = MaterialTheme.typography.labelLarge)
+                }
+
                 Button(
                   onClick = onCompileToDex,
                   enabled = !state.isCompiling && state.selectedClass != null && state.decompilerMode == DecompilerMode.JAVA,
@@ -359,8 +391,10 @@ fun JavaCodeEditorScreen(
                   selectedClass = state.selectedClass,
                   patchedClassNames = state.patchedClassNames,
                   searchQuery = state.searchQuery,
+                  searchScope = state.searchScope,
                   activeDexEntry = state.activeDexEntry,
                   onSearchChange = onSearchQueryChange,
+                  onSearchScopeChange = onSearchScopeChange,
                   onOpenPackageFolder = onOpenPackageFolder,
                   onNavigateUpFolder = onNavigateUpFolder,
                   onSelectClass = onSelectClass,
@@ -516,6 +550,18 @@ fun JavaCodeEditorScreen(
               }
             }
           },
+        )
+      }
+
+      if (state.deobfuscationState !is DeobfuscationUiState.Idle) {
+        ContextDeobfuscationDialog(
+          uiState = state.deobfuscationState,
+          topLevelClassName = state.selectedClass?.simpleName,
+          onToggleSuggestion = onToggleDeobfSuggestion,
+          onSetAllSelected = onSetAllDeobfSelected,
+          onApply = onApplyDeobfSuggestions,
+          onRetry = onAnalyzeObfuscated,
+          onDismiss = onDismissDeobfDialog,
         )
       }
     }
@@ -864,5 +910,271 @@ private fun ConfirmApplyAndSignDialog(
       }
     },
   )
+}
+
+@Composable
+private fun ContextDeobfuscationDialog(
+  uiState: DeobfuscationUiState,
+  topLevelClassName: String?,
+  onToggleSuggestion: (Int) -> Unit,
+  onSetAllSelected: (Boolean) -> Unit,
+  onApply: () -> Unit,
+  onRetry: () -> Unit,
+  onDismiss: () -> Unit,
+) {
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    icon = {
+      Icon(
+        imageVector = Icons.Default.AutoFixHigh,
+        contentDescription = null,
+        tint = MaterialTheme.colorScheme.primary,
+      )
+    },
+    title = {
+      Text(stringResource(R.string.deobf_dialog_title))
+    },
+    text = {
+      when (uiState) {
+        DeobfuscationUiState.Idle -> Unit
+        DeobfuscationUiState.Loading -> {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+          ) {
+            CircularProgressIndicator(modifier = Modifier.size(28.dp))
+            Text(
+              text = stringResource(R.string.deobf_loading_body),
+              style = MaterialTheme.typography.bodyMedium,
+            )
+          }
+        }
+        is DeobfuscationUiState.Error -> {
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Surface(
+              color = MaterialTheme.colorScheme.errorContainer,
+              shape = MaterialTheme.shapes.small,
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                Icon(
+                  imageVector = Icons.Default.Error,
+                  contentDescription = null,
+                  tint = MaterialTheme.colorScheme.error,
+                  modifier = Modifier.size(18.dp),
+                )
+                Text(
+                  text = uiState.message,
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+              }
+            }
+          }
+        }
+        is DeobfuscationUiState.Ready -> {
+          val selectedCount = uiState.suggestions.count { it.selected }
+          Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+          ) {
+            if (uiState.summary.isNotBlank()) {
+              Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                shape = MaterialTheme.shapes.small,
+                modifier = Modifier.fillMaxWidth(),
+              ) {
+                Column(modifier = Modifier.padding(10.dp)) {
+                  Text(
+                    text = stringResource(R.string.deobf_context_summary_label),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                  )
+                  Spacer(Modifier.height(2.dp))
+                  Text(
+                    text = uiState.summary,
+                    style = MaterialTheme.typography.bodySmall,
+                  )
+                }
+              }
+            }
+
+            if (uiState.suggestions.isEmpty()) {
+              Text(
+                text = stringResource(R.string.deobf_no_suggestions),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+            } else {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+              ) {
+                Text(
+                  text = stringResource(R.string.deobf_selected_count, selectedCount, uiState.suggestions.size),
+                  style = MaterialTheme.typography.labelMedium,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                  TextButton(
+                    onClick = { onSetAllSelected(true) },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                  ) {
+                    Text(stringResource(R.string.deobf_select_all), style = MaterialTheme.typography.labelSmall)
+                  }
+                  TextButton(
+                    onClick = { onSetAllSelected(false) },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                  ) {
+                    Text(stringResource(R.string.deobf_deselect_all), style = MaterialTheme.typography.labelSmall)
+                  }
+                }
+              }
+
+              HorizontalDivider()
+
+              Column(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .heightIn(max = 310.dp)
+                  .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                uiState.suggestions.forEachIndexed { idx, item ->
+                  DeobfuscationSuggestionRow(
+                    item = item,
+                    isTopLevelClass = item.kind == DeobfuscationSymbolKind.CLASS &&
+                      topLevelClassName != null &&
+                      item.originalName == topLevelClassName,
+                    onToggle = { onToggleSuggestion(idx) },
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    confirmButton = {
+      when (uiState) {
+        DeobfuscationUiState.Idle -> Unit
+        DeobfuscationUiState.Loading -> Unit
+        is DeobfuscationUiState.Error -> {
+          Button(onClick = onRetry) {
+            Text(stringResource(R.string.btn_retry))
+          }
+        }
+        is DeobfuscationUiState.Ready -> {
+          val selectedCount = uiState.suggestions.count { it.selected }
+          if (uiState.suggestions.isNotEmpty()) {
+            Button(
+              onClick = onApply,
+              enabled = selectedCount > 0,
+              modifier = Modifier.testTag("deobf_apply_btn"),
+            ) {
+              Text(stringResource(R.string.btn_apply_renames, selectedCount))
+            }
+          }
+        }
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text(stringResource(R.string.action_close))
+      }
+    },
+  )
+}
+
+@Composable
+private fun DeobfuscationSuggestionRow(
+  item: DeobfuscationSuggestion,
+  isTopLevelClass: Boolean,
+  onToggle: () -> Unit,
+) {
+  val kindLabel = when (item.kind) {
+    DeobfuscationSymbolKind.CLASS -> stringResource(R.string.deobf_kind_class)
+    DeobfuscationSymbolKind.METHOD -> stringResource(R.string.deobf_kind_method)
+    DeobfuscationSymbolKind.FIELD -> stringResource(R.string.deobf_kind_field)
+    DeobfuscationSymbolKind.PARAM_OR_VAR -> stringResource(R.string.deobf_kind_var)
+  }
+
+  Surface(
+    shape = MaterialTheme.shapes.small,
+    color = if (item.selected) {
+      MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+    } else {
+      MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+    },
+    modifier = Modifier
+      .fillMaxWidth()
+      .clickable(onClick = onToggle),
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
+      verticalAlignment = Alignment.Top,
+      horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+      Checkbox(
+        checked = item.selected,
+        onCheckedChange = { onToggle() },
+      )
+      Column(
+        modifier = Modifier
+          .weight(1f)
+          .padding(top = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+      ) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          Surface(
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            shape = MaterialTheme.shapes.extraSmall,
+          ) {
+            Text(
+              text = kindLabel,
+              style = MaterialTheme.typography.labelSmall,
+              color = MaterialTheme.colorScheme.onSecondaryContainer,
+              modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+            )
+          }
+          Text(
+            text = "${item.originalName} → ${item.suggestedName}",
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = JetBrainsMonoFamily,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+        if (item.reason.isNotBlank()) {
+          Text(
+            text = item.reason,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+        if (isTopLevelClass) {
+          Text(
+            text = stringResource(R.string.deobf_top_class_warning),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.tertiary,
+          )
+        }
+      }
+    }
+  }
 }
 

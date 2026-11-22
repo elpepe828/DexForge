@@ -81,6 +81,29 @@ class JavaDecompilerSession(
       allTypes += cls.type
     }
 
+    // Collect method names keyed by the top-level outer descriptor so inner/anonymous class
+    // methods are also searchable under the outer .java file they belong to.
+    val methodsByOuterType = HashMap<String, LinkedHashSet<String>>(loadedDex.classes.size)
+    for (cls in loadedDex.classes) {
+      val rawType = cls.type
+      if (!rawType.startsWith("L") || !rawType.endsWith(";")) continue
+      val internal = rawType.substring(1, rawType.length - 1)
+      val dollarIdx = internal.indexOf('$')
+      val targetType = if (dollarIdx > 0) {
+        val outerDescriptor = "L${internal.substring(0, dollarIdx)};"
+        if (outerDescriptor in allTypes) outerDescriptor else rawType
+      } else {
+        rawType
+      }
+      val bucket = methodsByOuterType.getOrPut(targetType) { LinkedHashSet() }
+      for (m in cls.methods) {
+        val name = m.name
+        if (name != "<init>" && name != "<clinit>") {
+          bucket += name
+        }
+      }
+    }
+
     val result = ArrayList<DexClassInfo>(loadedDex.classes.size)
     for (cls in loadedDex.classes) {
       val rawType = cls.type
@@ -99,6 +122,7 @@ class JavaDecompilerSession(
       val pkg = if (lastDot > 0) fullName.substring(0, lastDot) else "(default)"
       val simple = if (lastDot > 0) fullName.substring(lastDot + 1) else fullName
       val flags = cls.accessFlags
+      val collectedMethods = methodsByOuterType[rawType]?.toList().orEmpty()
 
       result += DexClassInfo(
         fullName = fullName,
@@ -109,6 +133,7 @@ class JavaDecompilerSession(
         fieldCount = cls.fields.count(),
         isInterface = (flags and 0x0200) != 0,
         isEnum = (flags and 0x4000) != 0,
+        methodNames = collectedMethods,
       )
     }
 

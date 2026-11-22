@@ -59,7 +59,10 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.model.DexClassInfo
 import com.example.model.DexEditorState
+import com.example.model.DexSearchScope
 import com.example.ui.theme.JetBrainsMonoFamily
+import kotlin.math.abs
+import kotlin.math.min
 
 data class DexPackageFolderItem(
   val name: String,
@@ -72,6 +75,121 @@ data class DexFolderListing(
   val folders: List<DexPackageFolderItem>,
   val classes: List<DexClassInfo>,
 )
+
+data class DexSearchMatch(
+  val cls: DexClassInfo,
+  val matchedClass: Boolean,
+  val matchedMethods: List<String>,
+  val rank: Int,
+)
+
+private fun boundedLevenshtein(a: String, b: String, maxDist: Int): Int? {
+  if (abs(a.length - b.length) > maxDist) return null
+  val n = a.length
+  val m = b.length
+  var prev = IntArray(m + 1) { it }
+  var curr = IntArray(m + 1)
+  for (i in 1..n) {
+    curr[0] = i
+    var rowMin = curr[0]
+    val ca = a[i - 1].lowercaseChar()
+    for (j in 1..m) {
+      val cost = if (ca == b[j - 1].lowercaseChar()) 0 else 1
+      val del = prev[j] + 1
+      val ins = curr[j - 1] + 1
+      val sub = prev[j - 1] + cost
+      val v = min(del, min(ins, sub))
+      curr[j] = v
+      if (v < rowMin) rowMin = v
+    }
+    if (rowMin > maxDist) return null
+    val tmp = prev
+    prev = curr
+    curr = tmp
+  }
+  return prev[m].takeIf { it <= maxDist }
+}
+
+private fun scoreIdentifierMatch(candidate: String, query: String, tokens: List<String>): Int? {
+  if (tokens.size > 1) {
+    return if (tokens.all { candidate.contains(it, ignoreCase = true) }) 2 else null
+  }
+  if (candidate.equals(query, ignoreCase = true)) return 0
+  if (candidate.startsWith(query, ignoreCase = true)) return 1
+  if (candidate.contains(query, ignoreCase = true)) return 2
+  val maxFuzzyDist = when {
+    query.length >= 7 -> 2
+    query.length >= 4 -> 1
+    else -> 0
+  }
+  if (maxFuzzyDist > 0 && boundedLevenshtein(candidate, query, maxFuzzyDist) != null) {
+    return 3
+  }
+  return null
+}
+
+fun searchDexClasses(
+  classes: List<DexClassInfo>,
+  rawQuery: String,
+  scope: DexSearchScope,
+): List<DexSearchMatch> {
+  val query = rawQuery.trim()
+  if (query.isEmpty()) return emptyList()
+  val tokens = query.split(Regex("\\s+")).filter { it.isNotEmpty() }
+
+  val matches = ArrayList<DexSearchMatch>()
+  for (cls in classes) {
+    var bestRank = Int.MAX_VALUE
+    var matchedClass = false
+
+    if (scope == DexSearchScope.ALL || scope == DexSearchScope.CLASSES) {
+      val simpleRank = scoreIdentifierMatch(cls.simpleName, query, tokens)
+      val fullRank = if (simpleRank != null) simpleRank else {
+        if (tokens.all { cls.fullName.contains(it, ignoreCase = true) }) 2 else null
+      }
+      if (fullRank != null) {
+        matchedClass = true
+        if (fullRank < bestRank) bestRank = fullRank
+      }
+    }
+
+    val matchedMethods = mutableListOf<String>()
+    if (scope == DexSearchScope.ALL || scope == DexSearchScope.METHODS) {
+      val scoredMethods = mutableListOf<Pair<Int, String>>()
+      for (methodName in cls.methodNames) {
+        val mRank = scoreIdentifierMatch(methodName, query, tokens)
+        if (mRank != null) {
+          scoredMethods += (mRank to methodName)
+          if (mRank < bestRank) bestRank = mRank
+        }
+      }
+      if (scoredMethods.isNotEmpty()) {
+        scoredMethods.sortWith(compareBy({ it.first }, { it.second.lowercase() }))
+        for ((_, name) in scoredMethods) {
+          matchedMethods += name
+        }
+      }
+    }
+
+    if (matchedClass || matchedMethods.isNotEmpty()) {
+      matches += DexSearchMatch(
+        cls = cls,
+        matchedClass = matchedClass,
+        matchedMethods = matchedMethods,
+        rank = bestRank,
+      )
+    }
+  }
+
+  matches.sortWith(
+    compareBy<DexSearchMatch>(
+      { it.rank },
+      { if (it.matchedClass) 0 else 1 },
+      { it.cls.simpleName.lowercase() },
+    )
+  )
+  return matches
+}
 
 fun buildDexFolderListing(
   allClasses: List<DexClassInfo>,
@@ -124,6 +242,7 @@ fun DexClassExplorerView(
   onNavigateUpFolder: () -> Unit,
   onSwitchDexEntry: (String) -> Unit,
   onSearchQueryChange: (String) -> Unit,
+  onSearchScopeChange: (DexSearchScope) -> Unit,
   onReturnToOpenClass: () -> Unit,
   onRequestSaveAndSign: () -> Unit,
   onCloseEditor: () -> Unit,
@@ -269,8 +388,10 @@ fun DexClassExplorerView(
         selectedClass = state.selectedClass,
         patchedClassNames = state.patchedClassNames,
         searchQuery = state.searchQuery,
+        searchScope = state.searchScope,
         activeDexEntry = state.activeDexEntry,
         onSearchChange = onSearchQueryChange,
+        onSearchScopeChange = onSearchScopeChange,
         onOpenPackageFolder = onOpenPackageFolder,
         onNavigateUpFolder = onNavigateUpFolder,
         onSelectClass = onSelectClass,
@@ -322,8 +443,10 @@ fun DexPackageBrowserContent(
   selectedClass: DexClassInfo?,
   patchedClassNames: Set<String>,
   searchQuery: String,
+  searchScope: DexSearchScope,
   activeDexEntry: String,
   onSearchChange: (String) -> Unit,
+  onSearchScopeChange: (DexSearchScope) -> Unit,
   onOpenPackageFolder: (String) -> Unit,
   onNavigateUpFolder: () -> Unit,
   onSelectClass: (DexClassInfo) -> Unit,
@@ -332,11 +455,8 @@ fun DexPackageBrowserContent(
   val trimmedQuery = searchQuery.trim()
   val isSearching = trimmedQuery.isNotEmpty()
 
-  val searchMatches = remember(classes, trimmedQuery) {
-    if (trimmedQuery.isEmpty()) emptyList()
-    else classes.filter {
-      it.fullName.contains(trimmedQuery, ignoreCase = true)
-    }
+  val searchMatches = remember(classes, trimmedQuery, searchScope) {
+    searchDexClasses(classes, trimmedQuery, searchScope)
   }
 
   val listing = remember(classes, currentPackagePath, patchedClassNames) {
@@ -348,7 +468,17 @@ fun DexPackageBrowserContent(
     OutlinedTextField(
       value = searchQuery,
       onValueChange = onSearchChange,
-      placeholder = { Text(stringResource(R.string.hint_search_class_or_pkg)) },
+      placeholder = {
+        Text(
+          stringResource(
+            when (searchScope) {
+              DexSearchScope.ALL -> R.string.hint_search_all
+              DexSearchScope.CLASSES -> R.string.hint_search_class_or_pkg
+              DexSearchScope.METHODS -> R.string.hint_search_methods
+            }
+          )
+        )
+      },
       leadingIcon = { Icon(Icons.Default.Search, null) },
       trailingIcon = {
         if (searchQuery.isNotEmpty()) {
@@ -360,9 +490,38 @@ fun DexPackageBrowserContent(
       singleLine = true,
       modifier = Modifier
         .fillMaxWidth()
-        .padding(horizontal = 12.dp, vertical = 8.dp)
+        .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 4.dp)
         .testTag("dex_class_search_input"),
     )
+
+    // Search Scope Selector (All / Classes only / Methods inside classes)
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .horizontalScroll(rememberScrollState())
+        .padding(horizontal = 12.dp, vertical = 2.dp),
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      FilterChip(
+        selected = searchScope == DexSearchScope.ALL,
+        onClick = { onSearchScopeChange(DexSearchScope.ALL) },
+        label = { Text(stringResource(R.string.search_scope_all)) },
+        modifier = Modifier.height(32.dp).testTag("dex_search_scope_all"),
+      )
+      FilterChip(
+        selected = searchScope == DexSearchScope.CLASSES,
+        onClick = { onSearchScopeChange(DexSearchScope.CLASSES) },
+        label = { Text(stringResource(R.string.search_scope_classes)) },
+        modifier = Modifier.height(32.dp).testTag("dex_search_scope_classes"),
+      )
+      FilterChip(
+        selected = searchScope == DexSearchScope.METHODS,
+        onClick = { onSearchScopeChange(DexSearchScope.METHODS) },
+        label = { Text(stringResource(R.string.search_scope_methods)) },
+        modifier = Modifier.height(32.dp).testTag("dex_search_scope_methods"),
+      )
+    }
 
     if (!isSearching) {
       // Breadcrumb path bar (like MT Manager path navigation)
@@ -424,16 +583,22 @@ fun DexPackageBrowserContent(
       if (isSearching) {
         if (searchMatches.isEmpty()) {
           item {
-            EmptyBrowserNotice(stringResource(R.string.empty_search_classes, trimmedQuery))
+            EmptyBrowserNotice(
+              stringResource(
+                if (searchScope == DexSearchScope.METHODS) R.string.empty_search_methods else R.string.empty_search_classes,
+                trimmedQuery,
+              )
+            )
           }
         } else {
-          items(searchMatches, key = { it.fullName }) { cls ->
+          items(searchMatches, key = { it.cls.fullName }) { match ->
             DexClassRow(
-              cls = cls,
+              cls = match.cls,
               showFullPackage = true,
-              isSelected = cls.fullName == selectedClass?.fullName,
-              isPatched = cls.fullName in patchedClassNames,
-              onClick = { onSelectClass(cls) },
+              isSelected = match.cls.fullName == selectedClass?.fullName,
+              isPatched = match.cls.fullName in patchedClassNames,
+              matchedMethods = match.matchedMethods,
+              onClick = { onSelectClass(match.cls) },
             )
             HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
           }
@@ -600,6 +765,7 @@ private fun DexClassRow(
   showFullPackage: Boolean,
   isSelected: Boolean,
   isPatched: Boolean,
+  matchedMethods: List<String> = emptyList(),
   onClick: () -> Unit,
 ) {
   Row(
@@ -694,6 +860,20 @@ private fun DexClassRow(
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
+
+      if (matchedMethods.isNotEmpty()) {
+        val preview = matchedMethods.take(4).joinToString(", ") { "$it()" } +
+          if (matchedMethods.size > 4) " (+${matchedMethods.size - 4})" else ""
+        Text(
+          text = stringResource(R.string.matched_methods_preview, preview),
+          style = MaterialTheme.typography.labelSmall,
+          fontFamily = JetBrainsMonoFamily,
+          color = MaterialTheme.colorScheme.primary,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.padding(top = 2.dp),
+        )
+      }
     }
 
     Surface(

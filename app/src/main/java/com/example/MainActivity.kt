@@ -8,6 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import com.example.ui.DexForgeApp
 import com.example.ui.theme.DexForgeTheme
 import com.example.util.LocaleManager
+import com.example.util.configureAppCheck
 
 class MainActivity : ComponentActivity() {
 
@@ -22,6 +23,7 @@ class MainActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    configureAppCheck(this, intent)
     enableEdgeToEdge()
     setContent {
       DexForgeTheme(darkTheme = true) {

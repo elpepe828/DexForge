@@ -3,28 +3,35 @@ package com.example.ui
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.R
 import com.example.data.WorkspaceRepository
+import com.example.engine.AiDeobfuscationEngine
 import com.example.engine.ApkArchiveEngine
 import com.example.engine.AxmlDecoder
 import com.example.engine.JavaDecompilerEngine
 import com.example.engine.JavaDecompilerSession
+import com.example.engine.JavaSymbolRenamer
 import com.example.engine.JavaToDexCompiler
 import com.example.model.ApkMetadataSummary
 import com.example.model.DecompilerMode
+import com.example.model.DeobfuscationUiState
 import com.example.model.DexClassInfo
 import com.example.model.DexEditorState
+import com.example.model.DexSearchScope
 import com.example.model.FileEntry
 import com.example.model.KeystoreProfile
 import com.example.model.PaneSourceType
 import com.example.model.PaneState
 import com.example.model.SignatureReport
 import com.example.util.LocaleManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -85,6 +92,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
   private val activeDexWorkingFiles = ConcurrentHashMap<String, File>()
   private val modifiedDexEntries = ConcurrentHashMap.newKeySet<String>()
   private var siblingDexExtractionJob: Job? = null
+  private var deobfuscationJob: Job? = null
 
   init {
     viewModelScope.launch(Dispatchers.IO) {
@@ -897,6 +905,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
   fun selectDexClass(cls: DexClassInfo) {
     val session = activeDecompilerSession ?: return
     val alreadyCached = session.isClassCached(cls.fullName)
+    deobfuscationJob?.cancel()
+    deobfuscationJob = null
     viewModelScope.launch(Dispatchers.IO) {
       _uiState.update { state ->
         state.copy(
@@ -908,6 +918,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             isDecompiling = !alreadyCached,
             smaliCode = "",
             lastCompileResult = null,
+            deobfuscationState = DeobfuscationUiState.Idle,
           )
         )
       }
@@ -932,6 +943,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
   fun setDexSearchQuery(query: String) {
     _uiState.update { state ->
       state.copy(dexEditor = state.dexEditor?.copy(searchQuery = query))
+    }
+  }
+
+  fun setDexSearchScope(scope: DexSearchScope) {
+    _uiState.update { state ->
+      state.copy(dexEditor = state.dexEditor?.copy(searchScope = scope))
     }
   }
 
@@ -1001,6 +1018,135 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
           undoStack = (ed.undoStack + ed.javaCode).takeLast(30),
           redoStack = ed.redoStack.dropLast(1),
         )
+      )
+    }
+  }
+
+  fun analyzeObfuscatedSymbols() {
+    val ed = _uiState.value.dexEditor ?: return
+    val cls = ed.selectedClass ?: return
+    if (ed.javaCode.isBlank() || ed.decompilerMode != DecompilerMode.JAVA) return
+
+    deobfuscationJob?.cancel()
+    deobfuscationJob = viewModelScope.launch(Dispatchers.IO) {
+      _uiState.update { state ->
+        val curr = state.dexEditor ?: return@update state
+        if (curr.selectedClass?.fullName != cls.fullName) return@update state
+        state.copy(dexEditor = curr.copy(deobfuscationState = DeobfuscationUiState.Loading))
+      }
+
+      try {
+        val langTag = _uiState.value.appLanguageTag.ifBlank {
+          java.util.Locale.getDefault().toLanguageTag()
+        }
+        val plan = AiDeobfuscationEngine.analyzeClassForDeobfuscation(
+          fullClassName = cls.fullName,
+          simpleClassName = cls.simpleName,
+          javaSource = ed.javaCode,
+          languageTag = langTag,
+        )
+        _uiState.update { state ->
+          val curr = state.dexEditor ?: return@update state
+          if (curr.selectedClass?.fullName != cls.fullName) return@update state
+          state.copy(
+            dexEditor = curr.copy(
+              deobfuscationState = DeobfuscationUiState.Ready(
+                summary = plan.summary,
+                suggestions = plan.suggestions,
+              )
+            )
+          )
+        }
+      } catch (e: TimeoutCancellationException) {
+        Log.e("MainViewModel", "Deobfuscation analysis timed out", e)
+        _uiState.update { state ->
+          val curr = state.dexEditor ?: return@update state
+          if (curr.selectedClass?.fullName != cls.fullName) return@update state
+          state.copy(
+            dexEditor = curr.copy(
+              deobfuscationState = DeobfuscationUiState.Error(str(R.string.deobf_error_timeout))
+            )
+          )
+        }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        Log.e("MainViewModel", "Deobfuscation analysis failed", e)
+        _uiState.update { state ->
+          val curr = state.dexEditor ?: return@update state
+          if (curr.selectedClass?.fullName != cls.fullName) return@update state
+          state.copy(
+            dexEditor = curr.copy(
+              deobfuscationState = DeobfuscationUiState.Error(
+                e.localizedMessage ?: str(R.string.deobf_error_generic)
+              )
+            )
+          )
+        }
+      }
+    }
+  }
+
+  fun toggleDeobfuscationSuggestion(index: Int) {
+    _uiState.update { state ->
+      val curr = state.dexEditor ?: return@update state
+      val ready = curr.deobfuscationState as? DeobfuscationUiState.Ready ?: return@update state
+      val updated = ready.suggestions.mapIndexed { idx, item ->
+        if (idx == index) item.copy(selected = !item.selected) else item
+      }
+      state.copy(
+        dexEditor = curr.copy(
+          deobfuscationState = ready.copy(suggestions = updated)
+        )
+      )
+    }
+  }
+
+  fun setAllDeobfuscationSuggestionsSelected(selected: Boolean) {
+    _uiState.update { state ->
+      val curr = state.dexEditor ?: return@update state
+      val ready = curr.deobfuscationState as? DeobfuscationUiState.Ready ?: return@update state
+      val updated = ready.suggestions.map { it.copy(selected = selected) }
+      state.copy(
+        dexEditor = curr.copy(
+          deobfuscationState = ready.copy(suggestions = updated)
+        )
+      )
+    }
+  }
+
+  fun applyDeobfuscationSuggestions() {
+    val ed = _uiState.value.dexEditor ?: return
+    val ready = ed.deobfuscationState as? DeobfuscationUiState.Ready ?: return
+    val selectedCount = ready.suggestions.count { it.selected }
+    if (selectedCount == 0) {
+      dismissDeobfuscationDialog()
+      return
+    }
+    viewModelScope.launch(Dispatchers.Default) {
+      val renamed = JavaSymbolRenamer.applyRenames(
+        javaSource = ed.javaCode,
+        suggestions = ready.suggestions,
+        enclosingClassSimpleName = ed.selectedClass?.simpleName,
+      )
+      withContext(Dispatchers.Main) {
+        updateJavaEditorCode(renamed)
+        _uiState.update { state ->
+          state.copy(
+            dexEditor = state.dexEditor?.copy(deobfuscationState = DeobfuscationUiState.Idle)
+          )
+        }
+        postMessage(str(R.string.msg_deobf_applied, selectedCount))
+      }
+    }
+  }
+
+  fun dismissDeobfuscationDialog() {
+    deobfuscationJob?.cancel()
+    deobfuscationJob = null
+    _uiState.update { state ->
+      state.copy(
+        dexEditor = state.dexEditor?.copy(deobfuscationState = DeobfuscationUiState.Idle)
       )
     }
   }
@@ -1246,6 +1392,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   private fun closeDexEditorInternal() {
+    deobfuscationJob?.cancel()
+    deobfuscationJob = null
     siblingDexExtractionJob?.cancel()
     siblingDexExtractionJob = null
     activeDecompilerSession?.close()
